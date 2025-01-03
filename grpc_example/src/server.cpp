@@ -5,13 +5,13 @@
 
 void callback(tf2_msgs::msg::TFMessage &tfmessage)
 {
-    std::cout << "Callback: Processing Header with frame_id: " << tfmessage.transforms()[0].header().frame_id() << std::endl;
-    std::cout << "Callback: Processing Header with stamp.sec: " << tfmessage.transforms()[0].header().stamp().sec() << std::endl;
-    std::cout << "Callback: Processing Header with stamp.nanosec: " << tfmessage.transforms()[0].header().stamp().nanosec() << std::endl;
-    std::cout << "Callback: Processing Header with child_frame_id: " << tfmessage.transforms()[0].child_frame_id() << std::endl;
-    std::cout << "Callback: Processing Header with transform.translation.x: " << tfmessage.transforms()[0].transform().translation().x() << std::endl;
-    std::cout << "Callback: Processing Header with transform.translation.y: " << tfmessage.transforms()[0].transform().translation().y() << std::endl;
-    std::cout << "Callback: Processing Header with transform.translation.z: " << tfmessage.transforms()[0].transform().translation().z() << std::endl;
+    std::cout << "Callback: Processing Header with frame_id: " << tfmessage.transforms()[1].header().frame_id() << std::endl;
+    std::cout << "Callback: Processing Header with stamp.sec: " << tfmessage.transforms()[1].header().stamp().sec() << std::endl;
+    std::cout << "Callback: Processing Header with stamp.nanosec: " << tfmessage.transforms()[1].header().stamp().nanosec() << std::endl;
+    std::cout << "Callback: Processing Header with child_frame_id: " << tfmessage.transforms()[1].child_frame_id() << std::endl;
+    std::cout << "Callback: Processing Header with transform.translation.x: " << tfmessage.transforms()[1].transform().translation().x() << std::endl;
+    std::cout << "Callback: Processing Header with transform.translation.y: " << tfmessage.transforms()[1].transform().translation().y() << std::endl;
+    std::cout << "Callback: Processing Header with transform.translation.z: " << tfmessage.transforms()[1].transform().translation().z() << std::endl;
     // ここにコールバック処理を実装
 }
 

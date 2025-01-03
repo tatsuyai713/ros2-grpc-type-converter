@@ -586,7 +586,7 @@ private:
                 copy_initializers.append(f"{field_name}_(other.{field_name}_)")
         if copy_initializers:
             copy_constructor += ",\n          " + ",\n          ".join(copy_initializers)
-    copy_constructor += "\n    {\n        // ローカルメンバのコピー\n    }"
+    copy_constructor += "\n    {}"
 
     # デストラクタ
     destructor = f"""\
@@ -597,6 +597,11 @@ private:
         }}
 {os.linesep.join(delete_members)}
     }}"""
+    
+    # ()オペレータ
+    copy_operator = f"""\
+    void operator()(const {class_name}& other)"""
+    copy_operator += "\n    {\n        grpc_->CopyFrom(*other.grpc_);\n    }"
     
     # Get grpc_ pointer
     get_accessor = f"    {grpc_full_class}* get_grpc() {{ return grpc_; }}"
@@ -616,6 +621,7 @@ public:
 {explicit_constructor}
 {copy_constructor}
 {destructor}
+{copy_operator}
 {get_accessor}
 {type_def}
     // ========== アクセサメソッド群 ==========
