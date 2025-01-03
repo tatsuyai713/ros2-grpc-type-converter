@@ -1,0 +1,3 @@
+[submodule "ros-data-types-for-fastdds"]
+	path = ros-data-types-for-fastdds
+	url = https://github.com/tatsuyai713/ros-data-types-for-fastdds
