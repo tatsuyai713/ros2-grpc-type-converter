@@ -568,7 +568,7 @@ private:
                 # )
             else:
                 # 標準型フィールド
-                member_vars.append(f"    mutable {cpp_type} {field_name}_;")
+                # member_vars.append(f"    mutable {cpp_type} {field_name}_;")
                 accessor_methods.append(
                     f"    {cpp_type} {field_name}() {{ return grpc_->{field_name}(); }}\n"
                     f"    void {field_name}({cpp_type} value) {{ grpc_->set_{field_name}( value ); }}"
@@ -576,9 +576,9 @@ private:
                 # initializer_list.append(
                 #     f"        {field_name}_(grpc_->{field_name}())"
                 # )
-                sendgrpc_sync_to_grpc.append(
-                    f"        grpc_->set_{field_name}({field_name}());"
-                )
+                # sendgrpc_sync_to_grpc.append(
+                #     f"        grpc_->set_{field_name}({field_name}());"
+                # )
 
     # namespace
     if namespace:
