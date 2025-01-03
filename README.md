@@ -40,6 +40,7 @@ Install path : /opt/grpc-libs
 
 ```shell
 python3 ./make_access_header.py ./ros-data-types-for-fastdds/src/
+sudo cp -rf ./ros-data-types-for-fastdds/src/* /opt/grpc-libs/include/
 ```
 
 ### Build examples
