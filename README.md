@@ -1,9 +1,5 @@
 # ros2-grpc-type-converter
 
-## About
-
-This repository provides a reference for converting ROS 2 message types to gRPC messages and vice versa. It demonstrates how to set up a gRPC service for ROS 2, enabling communication between ROS 2 and external services using gRPC.
-
 ## Clone repository
 
 ```shell
