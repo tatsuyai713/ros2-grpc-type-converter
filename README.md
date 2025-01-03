@@ -25,13 +25,13 @@ Install path : /opt/grpc
 ### Convert IDL to proto
 
 ```shell
-python3 ./convert_idl_to_proto.py
+LD_LIBRARY_PATH=/opt/grpc/lib python3 ./convert_idl_to_proto.py
 ```
 
 ### Compile proto and install ROS 2 type message libraries
 
 ```shell
-./compile_install_ros_msgs.sh
+LD_LIBRARY_PATH=/opt/grpc/lib ./compile_install_ros_msgs.sh
 ```
 
 Install path : /opt/grpc-libs
