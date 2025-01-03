@@ -3,7 +3,6 @@
 ## Limitations
 
 - Only support client to server communication
-- "header().stamp.sec() = 100;" style is not supported
 - byte array is converted to uint32_t array (need 4 times memory size)
 
 ## Clone repository

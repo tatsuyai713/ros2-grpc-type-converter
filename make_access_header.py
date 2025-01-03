@@ -310,6 +310,7 @@ def generate_wrapper_class(directory, namespace, message_name, fields):
     accessor_methods = []
     delete_members = []
     repeated_field_wrapper_code = ""
+    proxy_class = ""
 
     for field_name, info in fields.items():
         cpp_type = (
@@ -511,10 +512,36 @@ private:
                 )
             else:
                 # 標準型フィールド
-                accessor_methods.append(
-                    f"    {cpp_type} {field_name}() {{ return grpc_->{field_name}(); }}\n"
-                    f"    void {field_name}({cpp_type} value) {{ grpc_->set_{field_name}( value ); }}"
+                accessor_methods.append(f"""
+    {class_name}{field_name}Proxy {field_name}() {{
+        return {class_name}{field_name}Proxy(grpc_);
+    }}
+    void {field_name}({cpp_type} value) {{
+        grpc_->set_{field_name}(value);
+    }}
+    """
                 )
+                # Proxy クラスを生成
+                proxy_class += f"""
+class {class_name}{field_name}Proxy {{
+public:
+    {class_name}{field_name}Proxy({grpc_full_class}* grpc)
+        : grpc_(grpc) {{}}
+
+    {class_name}{field_name}Proxy& operator=({cpp_type} value) {{
+        grpc_->set_{field_name}(value);
+        return *this;
+    }}
+    
+    operator {cpp_type}() const {{
+        return grpc_->{field_name}();
+    }}
+    
+private:
+    {grpc_full_class}* grpc_;
+}};
+"""
+
 
     # namespace
     if namespace:
@@ -603,6 +630,11 @@ private:
     void operator()(const {class_name}& other)"""
     copy_operator += "\n    {\n        grpc_->CopyFrom(*other.grpc_);\n    }"
     
+    # =オペレータ
+    equal_operator = f"""\
+    void operator=(const {class_name}& other)"""
+    equal_operator += "\n    {\n        grpc_->CopyFrom(*other.grpc_);\n    }"
+    
     # Get grpc_ pointer
     get_accessor = f"    {grpc_full_class}* get_grpc() {{ return grpc_; }}"
     
@@ -614,7 +646,7 @@ private:
 {os.linesep.join(includes)}
 {repeated_field_wrapper_code}
 {namespace_declaration}
-
+{proxy_class}
 class {class_name} : public {grpc_full_class}Service::Service {{
 public:
 {constructor_code}
@@ -622,6 +654,7 @@ public:
 {copy_constructor}
 {destructor}
 {copy_operator}
+{equal_operator}
 {get_accessor}
 {type_def}
     // ========== アクセサメソッド群 ==========
