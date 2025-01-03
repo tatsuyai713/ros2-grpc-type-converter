@@ -367,12 +367,6 @@ public:
     // clear
     void clear() { field_->Clear(); }
 
-    // begin, end
-    T* begin() { return field_->mutable_data(); }
-    const T* begin() const { return field_->data(); }
-    T* end() { return field_->mutable_data() + size(); }
-    const T* end() const { return field_->data() + size(); }
-
 private:
     ::google::protobuf::RepeatedField<T>* field_;
 };
