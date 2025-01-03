@@ -19,17 +19,17 @@ int main(int argc, char** argv) {
     tfmessage.transforms().resize(100);
     tfmessage.transforms()[0].header().frame_id("frame_1");
     tfmessage.transforms()[0].header().stamp().sec(100);
-    tfmessage.transforms()[0].header().stamp().nanosec(100);
+    tfmessage.transforms()[0].header().stamp().nanosec() = 100;
     tfmessage.transforms()[0].child_frame_id() = "child_frame_1";
     tfmessage.transforms()[0].transform().translation().x(1.0);
 
     geometry_msgs::msg::TransformStamped transform;
     transform.header().frame_id("frame_2");
     transform.header().stamp().sec(200);
-    transform.header().stamp().nanosec(200);
+    transform.header().stamp().nanosec() = 200;
     transform.child_frame_id() = "child_frame_2";
     transform.transform().translation().x(2.0);
-    tfmessage.transforms()[1](transform);
+    tfmessage.transforms()[1] = transform;
 
     // Send the message
     int count = 190;
@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
         count++;
         std::cout << "Message sent: " << tfmessage.transforms()[1].header().frame_id() << std::endl;
         std::cout << "Message sent: " << tfmessage.transforms()[1].header().stamp().sec() << std::endl;
+        std::cout << "Message sent: " << tfmessage.transforms()[1].header().stamp().nanosec() << std::endl;
 
         publisher->publish(tfmessage);
     

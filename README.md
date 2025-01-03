@@ -1,5 +1,7 @@
 # ros2-grpc-type-converter
 
+This library cannot be used with ROS 2 because its output library name conflicts with a ROS 2 library name.
+
 ## Limitations
 
 - Only support client to server communication

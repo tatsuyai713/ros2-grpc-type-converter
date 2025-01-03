@@ -542,7 +542,6 @@ private:
 }};
 """
 
-
     # namespace
     if namespace:
         namespace_declaration = f"namespace {namespace} {{"
