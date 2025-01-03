@@ -157,13 +157,6 @@ def parse_pb_header(pb_header_path):
     for field_name, info in fields.items():
         
         info['is_message'] = False
-        info['is_repeated'] = False
-        
-        # repeated 判定
-        if 'add' in info or 'size' in info:
-            info['is_repeated'] = True
-        else:
-            info['is_repeated'] = False
 
     # メッセージ型かどうかの判定
     simple_types = ['int32_t', 'int64_t', 'uint32_t', 'uint64_t', 'float', 'double', 'bool', 'string', 'std::string']
@@ -325,26 +318,11 @@ def generate_wrapper_class(directory, namespace, message_name, fields):
             info.get('mutable', {}).get('return_type') or
             'void'
         ).strip()
-        is_repeated = info['is_repeated']
         is_message = info['is_message']
 
         if is_message:
-            # サブメッセージの場合、実際の型をメンバとして持つ
-            # 例: std_msgs::msg::Header stamp_;
             underlying_type = cpp_type.replace('GRPC', '').strip()
             if("RepeatedField" in underlying_type):
-                # member_vars.append(f"    {underlying_type}* {field_name}_;")
-                # # アクセッサメソッドを実際の型の参照を返すように
-                # accessor_methods.append(
-                #     f"    {underlying_type}& {field_name}() {{ return *{field_name}_; }}\n"
-                #     f"    const {underlying_type}& {field_name}() const {{ return *{field_name}_; }}"
-                # )
-                # # 初期化リストに追加
-                # initializer_list.append(
-                #     f"{field_name}_(grpc_->mutable_{field_name}())"
-                # )
-
-
                 # ラッパークラス内で使う detail 名前空間の定義 (RepeatedFieldWrapper)
                 repeated_field_wrapper_code = """
 #ifndef REPEATED_FIELD_WRAPPER_HPP
@@ -527,58 +505,22 @@ private:
                 initializer_list.append(
                     f"{field_name}_(new {underlying_type}(grpc_->mutable_{field_name}()))"
                 )
-                # sendで同期
-                # sendgrpc_sync_to_grpc.append(
-                #     f"        grpc_->mutable_{field_name}()->CopyFrom(*{field_name}_->get_grpc());"
-                # )
                 # デストラクタで削除
                 delete_members.append(f"        delete {field_name}_;")
         else:
-            # 標準型の場合、grpc_ フィールドに直接アクセス
-            if is_repeated:
-                # repeated => std::vector<cpp_type>
-                member_vars.append(f"    std::vector<{cpp_type}> {field_name}_;")
-                accessor_methods.append(
-                    f"    std::vector<{cpp_type}>& {field_name}() {{ return {field_name}_; }}\n"
-                    f"    const std::vector<{cpp_type}>& {field_name}() const {{ return {field_name}_; }}"
-                )
-                initializer_list.append(
-                    f"        for (int i = 0; i < grpc_->{field_name}_size(); i++) {{\n"
-                    f"            {field_name}_.push_back(grpc_->{field_name}(i));\n"
-                    f"        }}"
-                )
-                sendgrpc_sync_to_grpc.append(
-                    f"        grpc_->clear_{field_name}();\n"
-                    f"        for (auto& val : {field_name}_) {{\n"
-                    f"            *grpc_->add_{field_name}() = val;\n"
-                    f"        }}"
-                )
-            elif cpp_type in ['std::string', 'std::string&']:
+            if cpp_type in ['std::string', 'std::string&']:
                 # std::string の場合
                 accessor_methods.append(
                     f"    std::string& {field_name}() {{ return *grpc_->mutable_{field_name}(); }}\n"
                     f"    const std::string& {field_name}() const {{ return grpc_->{field_name}(); }}\n"
                     f"    void {field_name}(const std::string& value) {{ grpc_->set_{field_name}(value); }}"
                 )
-                # initializer_list.append(
-                #     f"        {field_name}_(*grpc_->mutable_{field_name}())"
-                # )
-                # sendgrpc_sync_to_grpc.append(
-                #     f"        grpc_->set_{field_name}({field_name}_);"
-                # )
             else:
                 # 標準型フィールド
-                # member_vars.append(f"    mutable {cpp_type} {field_name}_;")
                 accessor_methods.append(
                     f"    {cpp_type} {field_name}() {{ return grpc_->{field_name}(); }}\n"
                     f"    void {field_name}({cpp_type} value) {{ grpc_->set_{field_name}( value ); }}"
                 )
-                # initializer_list.append(
-                #     f"        {field_name}_(grpc_->{field_name}())"
-                # )
-                # sendgrpc_sync_to_grpc.append(
-                #     f"        grpc_->set_{field_name}({field_name}());"
-                # )
 
     # namespace
     if namespace:
@@ -615,12 +557,6 @@ private:
     # Initialize message-type member variables in the explicit constructor
     explicit_initializers = []
     explicit_initializers += initializer_list
-    # for field_name, info in fields.items():
-    #     if info['is_message']:
-    #         underlying_type = cpp_type.replace('GRPC', '').strip()
-    #         explicit_initializers.append(
-    #             f"{field_name}_(std::make_unique<{underlying_type}>(grpc_->mutable_{field_name}()))"
-    #         )
     if explicit_initializers:
         explicit_constructor += (
             "        , " + ",\n          ".join(explicit_initializers) + "\n"
@@ -674,66 +610,39 @@ private:
     # Type definition for subscription
     type_def = f"    {grpc_full_class} type_;"
 
-    # クラスコメントの修正
-    class_comment = f"""\
-    /**
-     * @brief ラッパークラス {class_name} は、{grpc_class_name} を包み込み、
-     * Fast DDS風に扱いやすくします。
-     * numeric な repeated フィールドは RepeatedFieldWrapper<T> を介して
-     * std::vector 風に操作できます。
-     * 
-     * 他のフィールド (メッセージや string など) は従来の実装を踏襲しています。
-     */"""
-
     # クラス定義
     header_content = f"""\
-
 {os.linesep.join(includes)}
-
 {repeated_field_wrapper_code}
 {namespace_declaration}
-
-{class_comment}
 
 class {class_name} : public {grpc_full_class}Service::Service {{
 public:
 {constructor_code}
-
 {explicit_constructor}
-
 {copy_constructor}
-
 {destructor}
-
 {get_accessor}
-
 {type_def}
-
     // ========== アクセサメソッド群 ==========
 {accessors_def}
-
     // gRPC サービスの Stub を初期化
     void NewStub(std::shared_ptr<grpc::Channel> channel) {{
         stub_ = {grpc_full_class}Service::NewStub(channel);
     }}
-
     // RPC メソッドの呼び出し
     grpc::Status send(grpc::ClientContext& context) {{
-
 {sendgrpc_code}
-
         google::protobuf::Empty empty;
         if (!stub_) {{
             return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Stub not initialized");
         }}
         return stub_->SendGRPC(&context, *grpc_, &empty);
     }}
-
 private:
     {grpc_full_class}* grpc_;
     bool data_owned_{{false}};
 {members_def}
-
     std::shared_ptr<{grpc_full_class}Service::Stub> stub_;
 }};
 
