@@ -25,13 +25,13 @@ Install path : /opt/grpc
 ### Convert IDL to proto
 
 ```shell
-LD_LIBRARY_PATH=/opt/grpc/lib python3 ./convert_idl_to_proto.py
+LD_LIBRARY_PATH=/opt/grpc/lib python3 ./convert_idl_to_proto.py ./ros-data-types-for-fastdds/src/
 ```
 
 ### Compile proto and install ROS 2 type message libraries
 
 ```shell
-LD_LIBRARY_PATH=/opt/grpc/lib ./compile_install_ros_msgs.sh
+LD_LIBRARY_PATH=/opt/grpc/lib ./compile_install_ros_msgs.sh ./ros-data-types-for-fastdds/src/
 ```
 
 Install path : /opt/grpc-libs
@@ -39,7 +39,7 @@ Install path : /opt/grpc-libs
 ### Make access headers for ROS 2 style data access
 
 ```shell
-python3 ./make_access_header.py
+python3 ./make_access_header.py ./ros-data-types-for-fastdds/src/
 ```
 
 ### Build examples
