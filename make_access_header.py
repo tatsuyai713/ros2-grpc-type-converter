@@ -528,9 +528,9 @@ private:
                     f"{field_name}_(new {underlying_type}(grpc_->mutable_{field_name}()))"
                 )
                 # sendで同期
-                sendgrpc_sync_to_grpc.append(
-                    f"        grpc_->mutable_{field_name}()->CopyFrom(*{field_name}_->get_grpc());"
-                )
+                # sendgrpc_sync_to_grpc.append(
+                #     f"        grpc_->mutable_{field_name}()->CopyFrom(*{field_name}_->get_grpc());"
+                # )
                 # デストラクタで削除
                 delete_members.append(f"        delete {field_name}_;")
         else:
