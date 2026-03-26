@@ -38,11 +38,15 @@ jobs:
             https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" \
             | sudo tee /etc/apt/sources.list.d/kitware.list >/dev/null
           sudo apt-get update
+          # Unhold any previously held cmake packages
+          sudo apt-mark unhold cmake cmake-data 2>/dev/null || true
           CMAKE_LATEST_3=$(apt-cache madison cmake \
             | awk -F'|' '{print $2}' | tr -d ' ' \
             | grep '^3\.' | sort -V | tail -1)
           if [ -n "${CMAKE_LATEST_3}" ]; then
-            sudo apt-get install -y cmake="${CMAKE_LATEST_3}"
+            sudo apt-get install -y --allow-downgrades \
+              cmake="${CMAKE_LATEST_3}" cmake-data="${CMAKE_LATEST_3}"
+            sudo apt-mark hold cmake cmake-data
           else
             sudo apt-get install -y cmake
           fi
