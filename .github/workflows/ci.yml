@@ -82,27 +82,13 @@ jobs:
           cd ../../..
           rm -rf grpc_src
 
-      - name: Convert IDL to Proto
+      - name: Install library (IDL convert + compile + headers)
         run: |
-          LD_LIBRARY_PATH=${{ env.GRPC_INSTALL_DIR }}/lib \
-            python3 ./convert_idl_to_proto.py ./ros-data-types-for-fastdds/src/
-
-      - name: Compile ROS message libraries
-        run: |
-          LD_LIBRARY_PATH=${{ env.GRPC_INSTALL_DIR }}/lib \
-            bash ./compile_install_ros_msgs.sh ./ros-data-types-for-fastdds/src/
-
-      - name: Generate access headers
-        run: |
-          python3 ./make_access_header.py ./ros-data-types-for-fastdds/src/
-          sudo cp -rf ./ros-data-types-for-fastdds/src/* ${{ env.GRPC_LIBS_DIR }}/include/
+          ./install_library.sh
 
       - name: Build examples and tests
         run: |
-          cd grpc_example
-          mkdir -p build && cd build
-          cmake ..
-          make -j$(nproc)
+          ./build_examples.sh
 
       - name: Run tests
         run: |
