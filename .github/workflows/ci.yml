@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GRPC_VERSION: v1.66.1
+  GRPC_INSTALL_DIR: /opt/grpc
+  GRPC_LIBS_DIR: /opt/grpc-libs
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential autoconf libtool pkg-config \
+            libsystemd-dev ca-certificates gpg wget python3
+
+      - name: Install CMake 3.x from Kitware
+        run: |
+          test -f /usr/share/doc/kitware-archive-keyring/copyright || \
+            wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
+            | gpg --dearmor - | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] \
+            https://apt.kitware.com/ubuntu/ $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/kitware.list >/dev/null
+          sudo apt-get update
+          CMAKE_LATEST_3=$(apt-cache madison cmake \
+            | awk -F'|' '{print $2}' | tr -d ' ' \
+            | grep '^3\.' | sort -V | tail -1)
+          if [ -n "${CMAKE_LATEST_3}" ]; then
+            sudo apt-get install -y cmake="${CMAKE_LATEST_3}"
+          else
+            sudo apt-get install -y cmake
+          fi
+          cmake --version
+
+      # Cache the gRPC build to avoid rebuilding every run
+      - name: Cache gRPC installation
+        id: cache-grpc
+        uses: actions/cache@v4
+        with:
+          path: /opt/grpc
+          key: grpc-${{ env.GRPC_VERSION }}-ubuntu2204-${{ hashFiles('install_grpc.sh') }}
+
+      - name: Build and install gRPC
+        if: steps.cache-grpc.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          git clone --recursive -b ${{ env.GRPC_VERSION }} \
+            https://github.com/grpc/grpc.git grpc_src
+          cd grpc_src
+          git submodule update --init --recursive
+          mkdir -p cmake/build && cd cmake/build
+          cmake -DCMAKE_BUILD_TYPE=Release \
+                -DgRPC_BUILD_TESTS=OFF \
+                -DgRPC_BUILD_CSHARP=OFF \
+                -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF \
+                -DgRPC_BUILD_GRPC_CPP_PLUGIN=ON \
+                -DgRPC_BUILD_SHARED_LIBS=ON \
+                -DgRPC_INSTALL=ON \
+                -DCMAKE_INSTALL_PREFIX=${{ env.GRPC_INSTALL_DIR }} \
+                -DBUILD_SHARED_LIBS=ON \
+                -Dprotobuf_BUILD_SHARED_LIBS=ON \
+                ../..
+          make -j$(nproc)
+          sudo mkdir -p ${{ env.GRPC_INSTALL_DIR }}
+          sudo make install
+          cd ../../..
+          rm -rf grpc_src
+
+      - name: Convert IDL to Proto
+        run: |
+          LD_LIBRARY_PATH=${{ env.GRPC_INSTALL_DIR }}/lib \
+            python3 ./convert_idl_to_proto.py ./ros-data-types-for-fastdds/src/
+
+      - name: Compile ROS message libraries
+        run: |
+          LD_LIBRARY_PATH=${{ env.GRPC_INSTALL_DIR }}/lib \
+            bash ./compile_install_ros_msgs.sh ./ros-data-types-for-fastdds/src/
+
+      - name: Generate access headers
+        run: |
+          python3 ./make_access_header.py ./ros-data-types-for-fastdds/src/
+          sudo cp -rf ./ros-data-types-for-fastdds/src/* ${{ env.GRPC_LIBS_DIR }}/include/
+
+      - name: Build examples and tests
+        run: |
+          cd grpc_example
+          mkdir -p build && cd build
+          cmake ..
+          make -j$(nproc)
+
+      - name: Run tests
+        run: |
+          cd grpc_example/build
+          LD_LIBRARY_PATH=${{ env.GRPC_INSTALL_DIR }}/lib:${{ env.GRPC_LIBS_DIR }}/lib \
+            ./test_all
