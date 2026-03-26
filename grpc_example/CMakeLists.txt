@@ -1,65 +1,98 @@
 cmake_minimum_required(VERSION 3.10)
 
 project(grpc_example)
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-as-needed")
-set(CMAKE_PREFIX_PATH "/opt/grpc" ${CMAKE_PREFIX_PATH})
-include(../cmake/common.cmake)
 
 # C++17を指定
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 set(CMAKE_BUILD_TYPE Debug)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# gRPCのパスを設定
-set(GRPC_LIBRARIES /opt/grpc/lib)
-set(GRPC_INCLUDE_DIRS /opt/grpc/include /opt/grpc-libs/include)
+# リンカ設定
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--no-as-needed")
 
-# Protobufライブラリを探す
+# gRPC / Protobuf のインストールパス
+set(GRPC_INSTALL_DIR "/opt/grpc")
+set(GRPC_LIBS_DIR "/opt/grpc-libs")
+
+set(CMAKE_PREFIX_PATH ${GRPC_INSTALL_DIR} ${CMAKE_PREFIX_PATH})
+include(../cmake/common.cmake)
+
+# gRPCとProtobufの検索
 find_package(Protobuf REQUIRED)
 find_package(gRPC REQUIRED)
 
-# ヘッダーとソースのパスを指定
-include_directories(${GRPC_INCLUDE_DIRS} 
-    /opt/grpc-libs/include/std_msgs/msg
-    /opt/grpc-libs/include/builtin_interfaces/msg
-    /opt/grpc-libs/include/geometry_msgs/msg
-    /opt/grpc-libs/include/sensor_msgs/msg
-    /opt/grpc-libs/include/tf2_msgs/msg
+# ヘッダーパスを指定
+include_directories(
+    ${GRPC_INSTALL_DIR}/include
+    ${GRPC_LIBS_DIR}/include
+    ${GRPC_LIBS_DIR}/include/std_msgs/msg
+    ${GRPC_LIBS_DIR}/include/builtin_interfaces/msg
+    ${GRPC_LIBS_DIR}/include/geometry_msgs/msg
+    ${GRPC_LIBS_DIR}/include/sensor_msgs/msg
+    ${GRPC_LIBS_DIR}/include/tf2_msgs/msg
+    ${GRPC_LIBS_DIR}/include/nav_msgs/msg
+    ${GRPC_LIBS_DIR}/include/visualization_msgs/msg
+    ${GRPC_LIBS_DIR}/include/example_interfaces/srv
+    ${GRPC_LIBS_DIR}/include/std_srvs/srv
     ${Protobuf_INCLUDE_DIRS}
-    include)
+    src
+)
 
-link_directories(${GRPC_LIBRARIES} /opt/grpc-libs/lib)
+link_directories(${GRPC_INSTALL_DIR}/lib ${GRPC_LIBS_DIR}/lib)
 
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+# ROS 2メッセージライブラリのリスト
+set(ROS_MSG_LIBS
+    ${GRPC_LIBS_DIR}/lib/libstd_msgs.so
+    ${GRPC_LIBS_DIR}/lib/libbuiltin_interfaces.so
+    ${GRPC_LIBS_DIR}/lib/libgeometry_msgs.so
+    ${GRPC_LIBS_DIR}/lib/libsensor_msgs.so
+    ${GRPC_LIBS_DIR}/lib/libtf2_msgs.so
+    ${GRPC_LIBS_DIR}/lib/libexample_interfaces.so
+)
 
-# 実行ファイルを設定
+# 共通のリンクライブラリ
+set(COMMON_LIBS
+    gRPC::grpc++
+    ${Protobuf_LIBRARIES}
+    ${ROS_MSG_LIBS}
+    absl::check
+    absl::flags
+    absl::flags_parse
+    absl::log
+    pthread
+)
+
+# --- Publisher (client) ---
+add_executable(publisher_node src/client.cpp)
+target_link_libraries(publisher_node ${COMMON_LIBS})
+
+# --- Subscriber (server) ---
+add_executable(subscriber_node src/server.cpp)
+target_link_libraries(subscriber_node ${COMMON_LIBS})
+
+# --- Service server example ---
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/service_server.cpp)
+    add_executable(service_server src/service_server.cpp)
+    target_link_libraries(service_server ${COMMON_LIBS})
+endif()
+
+# --- Service client example ---
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/service_client.cpp)
+    add_executable(service_client src/service_client.cpp)
+    target_link_libraries(service_client ${COMMON_LIBS})
+endif()
+
+# Legacy names (backward compat)
 add_executable(client src/client.cpp)
+target_link_libraries(client ${COMMON_LIBS})
+
 add_executable(server src/server.cpp)
+target_link_libraries(server ${COMMON_LIBS})
 
-# gRPCライブラリとビルド済みライブラリをリンク
-target_link_libraries(client 
-    gRPC::grpc++
-    ${Protobuf_LIBRARIES}
-    /opt/grpc-libs/lib/libstd_msgs.so
-    /opt/grpc-libs/lib/libbuiltin_interfaces.so
-    /opt/grpc-libs/lib/libgeometry_msgs.so
-    /opt/grpc-libs/lib/libsensor_msgs.so
-    /opt/grpc-libs/lib/libtf2_msgs.so
-    absl::check
-    absl::flags
-    absl::flags_parse
-    absl::log)
-
-target_link_libraries(server 
-    gRPC::grpc++
-    ${Protobuf_LIBRARIES}
-    /opt/grpc-libs/lib/libstd_msgs.so
-    /opt/grpc-libs/lib/libbuiltin_interfaces.so
-    /opt/grpc-libs/lib/libgeometry_msgs.so
-    /opt/grpc-libs/lib/libsensor_msgs.so
-    /opt/grpc-libs/lib/libtf2_msgs.so
-    absl::check
-    absl::flags
-    absl::flags_parse
-    absl::log)
+# --- Test executable ---
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/test_all.cpp)
+    add_executable(test_all src/test_all.cpp)
+    target_link_libraries(test_all ${COMMON_LIBS})
+endif()

@@ -405,6 +405,36 @@ public:
         }}
     }}
 
+    ~RepeatedPtrFieldWrapper() {{
+        for (auto* elem : elements_) {{
+            delete elem;
+        }}
+        elements_.clear();
+    }}
+
+    // コピーコンストラクタ
+    RepeatedPtrFieldWrapper(const RepeatedPtrFieldWrapper& other)
+        : field_(other.field_) {{
+        for (int i = 0; i < field_->size(); ++i) {{
+            elements_.push_back(new T(field_->Mutable(i)));
+        }}
+    }}
+
+    // コピー代入演算子
+    RepeatedPtrFieldWrapper& operator=(const RepeatedPtrFieldWrapper& other) {{
+        if (this != &other) {{
+            for (auto* elem : elements_) {{
+                delete elem;
+            }}
+            elements_.clear();
+            field_ = other.field_;
+            for (int i = 0; i < field_->size(); ++i) {{
+                elements_.push_back(new T(field_->Mutable(i)));
+            }}
+        }}
+        return *this;
+    }}
+
     // operator[]
     T& operator[](size_t index) {{
         if (!field_) {{
@@ -421,55 +451,52 @@ public:
 
     // push_back
     void push_back(const T& value) {{
-        field_->Add(value.get_grpc());
+        S* added = field_->Add();
+        added->CopyFrom(*value.get_grpc());
         elements_.push_back(new T(field_->Mutable(field_->size() - 1)));
     }}
 
     // erase
     void erase(size_t index) {{
         if (index >= size()) throw std::out_of_range("Index out of range");
-        field_->DeleteSubrange(index, 1);
         delete elements_[index];
         elements_.erase(elements_.begin() + index);
+        field_->DeleteSubrange(index, 1);
     }}
 
     // size, empty
     size_t size() const {{ return field_->size(); }}
-    bool empty() const {{ 
-        for (auto& elem : elements_) {{
-            delete elem;
-        }}
-        elements_.clear();
-        return field_->empty(); 
-    }}
-    
+    bool empty() const {{ return field_->empty(); }}
+
     // resize
     void resize(size_t new_size) {{
-        if (new_size > field_->size()) {{
-            // 要素数を増やす
-            for (size_t i = field_->size(); i < new_size; ++i) {{
+        size_t current_size = static_cast<size_t>(field_->size());
+        if (new_size > current_size) {{
+            for (size_t i = current_size; i < new_size; ++i) {{
                 auto* new_element = field_->Add();
                 elements_.push_back(new T(new_element));
             }}
-        }} else if (new_size < field_->size()) {{
-            // 要素数を減らす
-            for (size_t i = field_->size() - 1; i >= new_size; --i) {{
-                delete elements_[i];
+        }} else if (new_size < current_size) {{
+            for (size_t i = current_size; i > new_size; --i) {{
+                delete elements_[i - 1];
             }}
-            field_->DeleteSubrange(new_size, field_->size() - new_size);
             elements_.resize(new_size);
+            field_->DeleteSubrange(new_size, current_size - new_size);
         }}
     }}
 
     // clear
     void clear() {{
-        field_->Clear();
+        for (auto* elem : elements_) {{
+            delete elem;
+        }}
         elements_.clear();
+        field_->Clear();
     }}
 
 private:
     ::google::protobuf::RepeatedPtrField<S>* field_;
-    std::vector<T*> elements_;
+    mutable std::vector<T*> elements_;
 }};
 
 }} // namespace detail
@@ -516,6 +543,9 @@ private:
     {class_name}{field_name}Proxy {field_name}() {{
         return {class_name}{field_name}Proxy(grpc_);
     }}
+    {cpp_type} {field_name}() const {{
+        return grpc_->{field_name}();
+    }}
     void {field_name}({cpp_type} value) {{
         grpc_->set_{field_name}(value);
     }}
@@ -551,7 +581,7 @@ private:
         namespace_closing = ""
 
     # コンストラクタ
-    constructor_initializers = [f"grpc_(new {grpc_full_class}()), data_owned_(true)"]
+    constructor_initializers = [f"grpc_(new {grpc_full_class}())"]
     constructor_initializers += initializer_list
 
     constructor_code = ""
@@ -626,16 +656,16 @@ private:
     
     # ()オペレータ
     copy_operator = f"""\
-    void operator()(const {class_name}& other)"""
-    copy_operator += "\n    {\n        grpc_->CopyFrom(*other.grpc_);\n    }"
-    
+    {class_name}& operator()(const {class_name}& other)"""
+    copy_operator += "\n    {\n        grpc_->CopyFrom(*other.grpc_);\n        return *this;\n    }"
+
     # =オペレータ
     equal_operator = f"""\
-    void operator=(const {class_name}& other)"""
-    equal_operator += "\n    {\n        grpc_->CopyFrom(*other.grpc_);\n    }"
-    
+    {class_name}& operator=(const {class_name}& other)"""
+    equal_operator += "\n    {\n        if (this != &other) {\n            grpc_->CopyFrom(*other.grpc_);\n        }\n        return *this;\n    }"
+
     # Get grpc_ pointer
-    get_accessor = f"    {grpc_full_class}* get_grpc() {{ return grpc_; }}"
+    get_accessor = f"    {grpc_full_class}* get_grpc() {{ return grpc_; }}\n    const {grpc_full_class}* get_grpc() const {{ return grpc_; }}"
     
     # Type definition for subscription
     type_def = f"    {grpc_full_class} type_;"
@@ -673,7 +703,7 @@ public:
     }}
 private:
     {grpc_full_class}* grpc_;
-    bool data_owned_{{false}};
+    bool data_owned_{{true}};
 {members_def}
     std::shared_ptr<{grpc_full_class}Service::Stub> stub_;
 }};
@@ -752,6 +782,89 @@ def main():
     for idl_file in idl_files:
         print(f"Processing: {idl_file}")
         process_idl_file(idl_file)
+
+    # サービスペアのラッパーヘッダーを生成
+    generate_service_wrappers(base_dir)
+
+
+def generate_service_wrappers(base_directory):
+    """
+    .srv_info ファイルを検索し、ROS 2 互換のサービス型ヘッダーを生成する。
+    
+    生成されるヘッダーは以下の型エイリアスを含む:
+      - SrvType::Request  = リクエストラッパークラス
+      - SrvType::Response = レスポンスラッパークラス
+      - SrvType::ServiceBase = gRPC Service::Service 基底クラス
+      - SrvType::ServiceStubType = gRPC Stub クラス
+      - SrvType::GrpcRequestType = protobuf リクエスト型
+      - SrvType::GrpcResponseType = protobuf レスポンス型
+    """
+    for root, dirs, files in os.walk(base_directory):
+        for f in files:
+            if not f.endswith('.srv_info'):
+                continue
+
+            info_path = os.path.join(root, f)
+            info = {}
+            with open(info_path, 'r') as fp:
+                for line in fp:
+                    line = line.strip()
+                    if '=' in line:
+                        key, val = line.split('=', 1)
+                        info[key.strip()] = val.strip()
+
+            service_name = info.get('service_name', '')
+            request_type = info.get('request_type', '')   # e.g. AddTwoInts_Request
+            response_type = info.get('response_type', '')  # e.g. AddTwoInts_Response
+            response_dir = info.get('response_dir', root)
+
+            if not service_name or not request_type or not response_type:
+                continue
+
+            # 名前空間を推定 (ディレクトリ構造から)
+            relative_path = os.path.relpath(root, start=base_directory)
+            namespace_parts = [p for p in Path(relative_path).parts if p != '.']
+            namespace = '::'.join(namespace_parts) if namespace_parts else ''
+
+            request_lower = request_type.lower()
+            response_lower = response_type.lower()
+            service_lower = service_name.lower()
+
+            # gRPC 名
+            grpc_request = f"{request_type}GRPC"
+            grpc_response = f"{response_type}GRPC"
+            grpc_service_base = f"{service_name}RPCService"
+
+            ns_prefix = f"{namespace}::" if namespace else ""
+
+            header_content = f"""\
+#pragma once
+// Auto-generated ROS 2 compatible service type header for {service_name}
+
+#include "{request_lower}.hpp"
+#include "{response_lower}.hpp"
+#include "{response_type}.grpc.pb.h"
+
+{f'namespace {namespace} {{' if namespace else ''}
+
+struct {service_name} {{
+    using Request = {ns_prefix}{request_type};
+    using Response = {ns_prefix}{response_type};
+
+    // gRPC service types (used by rclcpp::Service and rclcpp::Client)
+    using ServiceBase = {ns_prefix}{grpc_service_base}::Service;
+    using ServiceStubType = {ns_prefix}{grpc_service_base};
+    using GrpcRequestType = {ns_prefix}{grpc_request};
+    using GrpcResponseType = {ns_prefix}{grpc_response};
+}};
+
+{f'}} // namespace {namespace}' if namespace else ''}
+"""
+
+            header_path = os.path.join(response_dir, f"{service_lower}.hpp")
+            with open(header_path, 'w', encoding='utf-8') as out:
+                out.write(header_content)
+            print(f"Generated service wrapper: {header_path}")
 
 
 if __name__ == "__main__":

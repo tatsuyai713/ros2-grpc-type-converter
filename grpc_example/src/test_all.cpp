@@ -1,0 +1,476 @@
+// test_all.cpp — Automated tests for ros2-grpc-type-converter
+//
+// Tests:
+//   1. Message accessor (unit tests for generated wrapper classes)
+//   2. Pub/Sub communication (integration test)
+//   3. Service communication (integration test)
+//   4. Node / Timer / Lifecycle API tests
+
+#include <cassert>
+#include <chrono>
+#include <cmath>
+#include <iostream>
+#include <atomic>
+#include <thread>
+#include <string>
+
+#include <rclcpp/rclcpp.hpp>
+#include "tf2_msgs/msg/tfmessage.hpp"
+#include "std_msgs/msg/header.hpp"
+#include "geometry_msgs/msg/vector3.hpp"
+#include "builtin_interfaces/msg/time.hpp"
+#include "example_interfaces/srv/addtwoints.hpp"
+
+// ============================================================================
+// Test utilities
+// ============================================================================
+
+static int g_tests_passed = 0;
+static int g_tests_failed = 0;
+
+#define TEST_ASSERT(cond, msg)                                                 \
+    do {                                                                       \
+        if (!(cond)) {                                                         \
+            std::cerr << "  FAIL: " << msg << " (" << #cond << ")"             \
+                      << std::endl;                                            \
+            g_tests_failed++;                                                  \
+        } else {                                                               \
+            g_tests_passed++;                                                  \
+        }                                                                      \
+    } while (0)
+
+#define TEST_ASSERT_EQ(a, b, msg)                                              \
+    do {                                                                       \
+        auto _a = (a);                                                         \
+        auto _b = (b);                                                         \
+        if (_a != _b) {                                                        \
+            std::cerr << "  FAIL: " << msg << " (expected=" << _b              \
+                      << " got=" << _a << ")" << std::endl;                    \
+            g_tests_failed++;                                                  \
+        } else {                                                               \
+            g_tests_passed++;                                                  \
+        }                                                                      \
+    } while (0)
+
+#define TEST_ASSERT_NEAR(a, b, tol, msg)                                       \
+    do {                                                                       \
+        auto _a = (a);                                                         \
+        auto _b = (b);                                                         \
+        if (std::fabs(_a - _b) > tol) {                                        \
+            std::cerr << "  FAIL: " << msg << " (expected=" << _b              \
+                      << " got=" << _a << ")" << std::endl;                    \
+            g_tests_failed++;                                                  \
+        } else {                                                               \
+            g_tests_passed++;                                                  \
+        }                                                                      \
+    } while (0)
+
+// ============================================================================
+// Test 1: Message accessor unit tests
+// ============================================================================
+
+void test_builtin_time_accessor() {
+    std::cout << "[TEST] builtin_interfaces::msg::Time accessor" << std::endl;
+
+    builtin_interfaces::msg::Time t;
+
+    // setter via function call
+    t.sec(42);
+    t.nanosec(123456);
+
+    // getter via proxy (non-const)
+    TEST_ASSERT_EQ(static_cast<int32_t>(t.sec()), 42, "sec getter");
+    TEST_ASSERT_EQ(static_cast<uint32_t>(t.nanosec()), 123456u, "nanosec getter");
+
+    // setter via assignment operator
+    t.sec() = 100;
+    t.nanosec() = 999;
+    TEST_ASSERT_EQ(static_cast<int32_t>(t.sec()), 100, "sec assign");
+    TEST_ASSERT_EQ(static_cast<uint32_t>(t.nanosec()), 999u, "nanosec assign");
+
+    // const accessor
+    const builtin_interfaces::msg::Time& ct = t;
+    TEST_ASSERT_EQ(ct.sec(), 100, "const sec");
+    TEST_ASSERT_EQ(ct.nanosec(), 999u, "const nanosec");
+}
+
+void test_header_accessor() {
+    std::cout << "[TEST] std_msgs::msg::Header accessor" << std::endl;
+
+    std_msgs::msg::Header header;
+
+    // string field setter/getter
+    header.frame_id("my_frame");
+    TEST_ASSERT_EQ(header.frame_id(), std::string("my_frame"), "frame_id setter/getter");
+
+    // string field assignment
+    header.frame_id() = "new_frame";
+    TEST_ASSERT_EQ(header.frame_id(), std::string("new_frame"), "frame_id assign");
+
+    // sub-message accessor
+    header.stamp().sec(1234);
+    header.stamp().nanosec(5678);
+    TEST_ASSERT_EQ(static_cast<int32_t>(header.stamp().sec()), 1234, "stamp.sec");
+    TEST_ASSERT_EQ(static_cast<uint32_t>(header.stamp().nanosec()), 5678u, "stamp.nanosec");
+
+    // const accessor
+    const std_msgs::msg::Header& ch = header;
+    TEST_ASSERT_EQ(ch.frame_id(), std::string("new_frame"), "const frame_id");
+    TEST_ASSERT_EQ(ch.stamp().sec(), 1234, "const stamp.sec");
+    TEST_ASSERT_EQ(ch.stamp().nanosec(), 5678u, "const stamp.nanosec");
+}
+
+void test_vector3_accessor() {
+    std::cout << "[TEST] geometry_msgs::msg::Vector3 accessor" << std::endl;
+
+    geometry_msgs::msg::Vector3 v;
+    v.x(1.5);
+    v.y(2.5);
+    v.z(3.5);
+
+    TEST_ASSERT_NEAR(static_cast<double>(v.x()), 1.5, 1e-9, "x");
+    TEST_ASSERT_NEAR(static_cast<double>(v.y()), 2.5, 1e-9, "y");
+    TEST_ASSERT_NEAR(static_cast<double>(v.z()), 3.5, 1e-9, "z");
+
+    // const version
+    const geometry_msgs::msg::Vector3& cv = v;
+    TEST_ASSERT_NEAR(cv.x(), 1.5, 1e-9, "const x");
+    TEST_ASSERT_NEAR(cv.y(), 2.5, 1e-9, "const y");
+    TEST_ASSERT_NEAR(cv.z(), 3.5, 1e-9, "const z");
+}
+
+void test_tfmessage_repeated() {
+    std::cout << "[TEST] tf2_msgs::msg::TFMessage repeated field" << std::endl;
+
+    tf2_msgs::msg::TFMessage msg;
+
+    // Initially empty
+    TEST_ASSERT_EQ(msg.transforms().size(), (size_t)0, "initial size 0");
+
+    // Resize and set
+    msg.transforms().resize(2);
+    TEST_ASSERT_EQ(msg.transforms().size(), (size_t)2, "resize to 2");
+
+    msg.transforms()[0].header().frame_id("world");
+    msg.transforms()[0].child_frame_id() = "base_link";
+    msg.transforms()[0].transform().translation().x(1.0);
+
+    msg.transforms()[1].header().frame_id("base_link");
+    msg.transforms()[1].child_frame_id() = "sensor";
+    msg.transforms()[1].transform().translation().y(2.0);
+
+    TEST_ASSERT_EQ(msg.transforms()[0].header().frame_id(), std::string("world"), "transform[0] frame_id");
+    TEST_ASSERT_EQ(msg.transforms()[0].child_frame_id(), std::string("base_link"), "transform[0] child");
+    TEST_ASSERT_NEAR(static_cast<double>(msg.transforms()[0].transform().translation().x()), 1.0, 1e-9, "transform[0] x");
+
+    TEST_ASSERT_EQ(msg.transforms()[1].header().frame_id(), std::string("base_link"), "transform[1] frame_id");
+    TEST_ASSERT_EQ(msg.transforms()[1].child_frame_id(), std::string("sensor"), "transform[1] child");
+    TEST_ASSERT_NEAR(static_cast<double>(msg.transforms()[1].transform().translation().y()), 2.0, 1e-9, "transform[1] y");
+}
+
+void test_message_copy() {
+    std::cout << "[TEST] Message copy semantics" << std::endl;
+
+    std_msgs::msg::Header original;
+    original.frame_id("original");
+    original.stamp().sec(42);
+
+    // Copy assignment
+    std_msgs::msg::Header copy;
+    copy = original;
+    TEST_ASSERT_EQ(copy.frame_id(), std::string("original"), "copy frame_id");
+    TEST_ASSERT_EQ(static_cast<int32_t>(copy.stamp().sec()), 42, "copy stamp.sec");
+
+    // Modify copy should not affect original
+    copy.frame_id("modified");
+    TEST_ASSERT_EQ(original.frame_id(), std::string("original"), "original unchanged after copy mod");
+}
+
+// ============================================================================
+// Test 2: Pub/Sub integration test
+// ============================================================================
+
+void test_pubsub_communication() {
+    std::cout << "[TEST] Pub/Sub communication" << std::endl;
+
+    std::atomic<int> received_count{0};
+    std::string received_frame_id;
+    int32_t received_sec = -1;
+
+    // Create subscriber node
+    auto sub_node = std::make_shared<rclcpp::Node>(
+        "test_subscriber",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50061"));
+
+    auto subscription = sub_node->create_subscription<tf2_msgs::msg::TFMessage>(
+        "test_tf", 10,
+        [&](const tf2_msgs::msg::TFMessage& msg) {
+            if (msg.transforms().size() > 0) {
+                received_frame_id = msg.transforms()[0].header().frame_id();
+                received_sec = msg.transforms()[0].header().stamp().sec();
+                received_count++;
+            }
+        });
+
+    // Start server in background thread
+    std::thread server_thread([&sub_node]() {
+        sub_node->spin_some();
+        // Keep server running for a bit
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    });
+
+    // Give server time to start
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Create publisher node
+    auto pub_node = std::make_shared<rclcpp::Node>(
+        "test_publisher",
+        rclcpp::NodeOptions().set_connect_address("localhost:50061"));
+
+    auto publisher = pub_node->create_publisher<tf2_msgs::msg::TFMessage>("test_tf", 10);
+
+    // Publish a message
+    tf2_msgs::msg::TFMessage msg;
+    msg.transforms().resize(1);
+    msg.transforms()[0].header().frame_id("test_world");
+    msg.transforms()[0].header().stamp().sec(777);
+    msg.transforms()[0].child_frame_id() = "test_child";
+    msg.transforms()[0].transform().translation().x(3.14);
+
+    publisher->publish(msg);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Publish a second message
+    msg.transforms()[0].header().stamp().sec(888);
+    publisher->publish(msg);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Shutdown
+    sub_node->shutdown_node();
+    server_thread.join();
+
+    TEST_ASSERT(received_count >= 1, "received at least 1 message");
+    TEST_ASSERT_EQ(received_frame_id, std::string("test_world"), "received frame_id");
+    TEST_ASSERT(received_sec == 777 || received_sec == 888, "received correct sec");
+}
+
+// ============================================================================
+// Test 3: Service integration test
+// ============================================================================
+
+void test_service_communication() {
+    std::cout << "[TEST] Service communication (AddTwoInts)" << std::endl;
+
+    // Create service server node
+    auto server_node = std::make_shared<rclcpp::Node>(
+        "test_service_server",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50062"));
+
+    auto service = server_node->create_service<example_interfaces::srv::AddTwoInts>(
+        "test_add",
+        [](const std::shared_ptr<example_interfaces::srv::AddTwoInts::Request> req,
+           std::shared_ptr<example_interfaces::srv::AddTwoInts::Response> res) {
+            res->sum(static_cast<int64_t>(req->a()) + static_cast<int64_t>(req->b()));
+        });
+
+    // Start server
+    std::thread server_thread([&server_node]() {
+        server_node->spin_some();
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Create service client node
+    auto client_node = std::make_shared<rclcpp::Node>(
+        "test_service_client",
+        rclcpp::NodeOptions().set_connect_address("localhost:50062"));
+
+    auto client = client_node->create_client<example_interfaces::srv::AddTwoInts>("test_add");
+
+    // Test 1: 3 + 5 = 8
+    {
+        auto req = std::make_shared<example_interfaces::srv::AddTwoInts::Request>();
+        req->a(3);
+        req->b(5);
+        auto future = client->async_send_request(req);
+        auto response = future.get();
+        TEST_ASSERT_EQ(static_cast<int64_t>(response->sum()), (int64_t)8, "3+5=8");
+    }
+
+    // Test 2: -10 + 25 = 15
+    {
+        auto req = std::make_shared<example_interfaces::srv::AddTwoInts::Request>();
+        req->a(-10);
+        req->b(25);
+        auto future = client->async_send_request(req);
+        auto response = future.get();
+        TEST_ASSERT_EQ(static_cast<int64_t>(response->sum()), (int64_t)15, "-10+25=15");
+    }
+
+    // Test 3: 0 + 0 = 0
+    {
+        auto req = std::make_shared<example_interfaces::srv::AddTwoInts::Request>();
+        req->a(0);
+        req->b(0);
+        auto future = client->async_send_request(req);
+        auto response = future.get();
+        TEST_ASSERT_EQ(static_cast<int64_t>(response->sum()), (int64_t)0, "0+0=0");
+    }
+
+    server_node->shutdown_node();
+    server_thread.join();
+}
+
+// ============================================================================
+// Test 4: Node / Timer / Lifecycle API tests
+// ============================================================================
+
+void test_node_api() {
+    std::cout << "[TEST] Node API" << std::endl;
+
+    auto node = std::make_shared<rclcpp::Node>(
+        "test_node_api",
+        rclcpp::NodeOptions()
+            .set_server_address("0.0.0.0:50063")
+            .set_connect_address("localhost:50063"));
+
+    TEST_ASSERT_EQ(node->get_name(), std::string("test_node_api"), "node name");
+    TEST_ASSERT_EQ(node->get_logger().get_name(), std::string("test_node_api"), "logger name");
+
+    node->shutdown_node();
+}
+
+void test_lifecycle() {
+    std::cout << "[TEST] Lifecycle (init/ok/shutdown)" << std::endl;
+
+    // rclcpp::init was already called in main
+    TEST_ASSERT(rclcpp::ok(), "ok() returns true after init");
+
+    // shutdown and re-init for isolated test
+    rclcpp::shutdown();
+    TEST_ASSERT(!rclcpp::ok(), "ok() returns false after shutdown");
+
+    // Re-init for subsequent tests
+    char* argv[] = {nullptr};
+    rclcpp::init(0, argv);
+    TEST_ASSERT(rclcpp::ok(), "ok() returns true after re-init");
+}
+
+void test_timer() {
+    std::cout << "[TEST] WallTimer" << std::endl;
+
+    auto node = std::make_shared<rclcpp::Node>(
+        "test_timer_node",
+        rclcpp::NodeOptions().set_connect_address("localhost:50064"));
+
+    std::atomic<int> timer_count{0};
+    auto timer = node->create_wall_timer(
+        std::chrono::milliseconds(50),
+        [&timer_count]() { timer_count++; });
+
+    // Wait for timer to fire a few times
+    std::this_thread::sleep_for(std::chrono::milliseconds(350));
+
+    timer->cancel();
+    TEST_ASSERT(timer_count >= 3, "timer fired at least 3 times");
+    TEST_ASSERT(timer->is_canceled(), "timer is canceled");
+
+    node->shutdown_node();
+}
+
+void test_qos() {
+    std::cout << "[TEST] QoS" << std::endl;
+
+    rclcpp::QoS qos(10);
+    TEST_ASSERT_EQ(qos.depth(), (size_t)10, "QoS depth");
+
+    rclcpp::QoS qos2(1);
+    TEST_ASSERT_EQ(qos2.depth(), (size_t)1, "QoS depth 1");
+}
+
+void test_logger() {
+    std::cout << "[TEST] Logger" << std::endl;
+
+    auto logger = rclcpp::get_logger("test_logger");
+    TEST_ASSERT_EQ(logger.get_name(), std::string("test_logger"), "logger name");
+
+    // These should not crash — visual verification only
+    RCLCPP_INFO(logger, "Test info: %d", 42);
+    RCLCPP_WARN(logger, "Test warn: %s", "warning");
+    RCLCPP_ERROR(logger, "Test error: %.2f", 3.14);
+    RCLCPP_INFO_STREAM(logger, "Stream test: " << 123);
+}
+
+void test_rate() {
+    std::cout << "[TEST] Rate" << std::endl;
+
+    rclcpp::Rate rate(10.0);  // 10 Hz
+    auto start = std::chrono::steady_clock::now();
+    rate.sleep();
+    rate.sleep();
+    auto elapsed = std::chrono::steady_clock::now() - start;
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+
+    // 2 sleeps at 10Hz = ~200ms, allow ±100ms tolerance
+    TEST_ASSERT(ms >= 100 && ms <= 400, "Rate(10Hz) 2 sleeps ~200ms");
+}
+
+void test_node_options() {
+    std::cout << "[TEST] NodeOptions" << std::endl;
+
+    rclcpp::NodeOptions opts;
+    opts.set_server_address("0.0.0.0:12345")
+        .set_connect_address("remote:54321")
+        .set_allow_remote(false);
+
+    TEST_ASSERT_EQ(opts.server_address(), std::string("0.0.0.0:12345"), "server_address");
+    TEST_ASSERT_EQ(opts.connect_address(), std::string("remote:54321"), "connect_address");
+    TEST_ASSERT_EQ(opts.allow_remote(), false, "allow_remote");
+}
+
+// ============================================================================
+// Main
+// ============================================================================
+
+int main(int argc, char** argv) {
+    std::cout << "========================================" << std::endl;
+    std::cout << "  ros2-grpc-type-converter Test Suite" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    rclcpp::init(argc, argv);
+
+    // --- Unit tests: message accessors ---
+    std::cout << std::endl << "--- Message Accessor Tests ---" << std::endl;
+    test_builtin_time_accessor();
+    test_header_accessor();
+    test_vector3_accessor();
+    test_tfmessage_repeated();
+    test_message_copy();
+
+    // --- Unit tests: API ---
+    std::cout << std::endl << "--- API Tests ---" << std::endl;
+    test_node_options();
+    test_qos();
+    test_logger();
+    test_rate();
+    test_lifecycle();
+    test_node_api();
+    test_timer();
+
+    // --- Integration tests: communication ---
+    std::cout << std::endl << "--- Integration Tests ---" << std::endl;
+    test_pubsub_communication();
+    test_service_communication();
+
+    // --- Summary ---
+    std::cout << std::endl;
+    std::cout << "========================================" << std::endl;
+    std::cout << "  Results: " << g_tests_passed << " passed, "
+              << g_tests_failed << " failed" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    rclcpp::shutdown();
+
+    return g_tests_failed > 0 ? 1 : 0;
+}

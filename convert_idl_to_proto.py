@@ -178,10 +178,36 @@ def convert_idl_to_proto(idl_content, include_files, proto_file_path):
     if in_struct:
         proto_content.append("}")
 
-    # サービス定義を追加
+    # サービス定義を追加 (Topic用の SendGRPC)
     if current_struct:
         proto_content.append(f"service {current_struct}Service {{")
         proto_content.append(f"  rpc SendGRPC({current_struct}) returns (google.protobuf.Empty);")
+        proto_content.append("}")
+
+    # _Response ファイルの場合、対応する _Request と組み合わせたサービスRPCを生成
+    basename = os.path.basename(proto_file_path).replace('.proto', '')
+    if basename.endswith('_Response') and current_struct:
+        service_base = basename.replace('_Response', '')
+        request_proto = basename.replace('_Response', '_Request') + '.proto'
+        request_type = service_base + '_RequestGRPC'
+        response_type = current_struct  # e.g. AddTwoInts_ResponseGRPC
+        service_name = service_base + 'RPCService'
+
+        # Import the request proto (if not already imported)
+        import_line = f'import "{request_proto}";'
+        if import_line not in proto_content:
+            # Insert after the last import line
+            last_import_idx = -1
+            for idx, line in enumerate(proto_content):
+                if line.startswith('import '):
+                    last_import_idx = idx
+            if last_import_idx >= 0:
+                proto_content.insert(last_import_idx + 1, import_line)
+            else:
+                proto_content.insert(2, import_line)
+
+        proto_content.append(f"service {service_name} {{")
+        proto_content.append(f"  rpc CallService({request_type}) returns ({response_type});")
         proto_content.append("}")
 
     return "\n".join(proto_content)
@@ -206,9 +232,13 @@ def compile_proto(proto_file_path, error_files):
         "--proto_path=" + os.path.dirname(proto_file_path),
         "--proto_path=" + "/opt/grpc/include/",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../",
+        "--proto_path=" + os.path.dirname(proto_file_path) + "/../../action_msgs/msg",
+        "--proto_path=" + os.path.dirname(proto_file_path) + "/../../action_msgs/srv",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../builtin_interfaces/msg",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../diagnostic_msgs/msg",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../diagnostic_msgs/srv",
+        "--proto_path=" + os.path.dirname(proto_file_path) + "/../../example_interfaces/srv",
+        "--proto_path=" + os.path.dirname(proto_file_path) + "/../../example_interfaces/action",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../gazebo_msgs/msg",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../gazebo_msgs/srv",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../geometry_msgs/msg",
@@ -223,13 +253,14 @@ def compile_proto(proto_file_path, error_files):
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../sensor_msgs/srv",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../shape_msgs/msg",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../std_msgs/msg",
-        "--proto_path=" + os.path.dirname(proto_file_path) + "/../../std_msgs/srv",
+        "--proto_path=" + os.path.dirname(proto_file_path) + "/../../std_srvs/srv",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../stereo_msgs/msg",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../test_msgs/msg",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../test_msgs/srv",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../tf2_msgs/msg",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../tf2_msgs/srv",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../trajectory_msgs/msg",
+        "--proto_path=" + os.path.dirname(proto_file_path) + "/../../unique_identifier_msgs/msg",
         "--proto_path=" + os.path.dirname(proto_file_path) + "/../../visualization_msgs/msg",
         "--cpp_out=" + os.path.dirname(proto_file_path),
         "--grpc_out=" + os.path.dirname(proto_file_path),
@@ -241,6 +272,39 @@ def compile_proto(proto_file_path, error_files):
 
     if result.returncode != 0:
         error_files.append((proto_file_path, result.stderr))
+
+def generate_service_pairs(folder_path, proto_files):
+    """
+    _Request と _Response のペアを検出し、サービスラッパーヘッダーの
+    テンプレート情報ファイル (.srv_info) を生成する。
+    make_access_header.py がこの情報を使ってサービス型ヘッダーを生成する。
+    """
+    # proto ファイルからペアを検出
+    response_files = {}
+    request_files = {}
+    for pf in proto_files:
+        basename = os.path.basename(pf).replace('.proto', '')
+        dirname = os.path.dirname(pf)
+        if basename.endswith('_Response'):
+            service_name = basename.replace('_Response', '')
+            response_files[service_name] = (dirname, basename)
+        elif basename.endswith('_Request'):
+            service_name = basename.replace('_Request', '')
+            request_files[service_name] = (dirname, basename)
+
+    # ペアを見つけてサービス情報ファイルを生成
+    for service_name, (dirname, resp_basename) in response_files.items():
+        if service_name in request_files:
+            req_dirname, req_basename = request_files[service_name]
+            info_path = os.path.join(dirname, f"{service_name}.srv_info")
+            with open(info_path, 'w') as f:
+                f.write(f"service_name={service_name}\n")
+                f.write(f"request_type={req_basename}\n")
+                f.write(f"response_type={resp_basename}\n")
+                f.write(f"request_dir={req_dirname}\n")
+                f.write(f"response_dir={dirname}\n")
+            print(f"Generated service info: {info_path}")
+
 
 # 指定されたフォルダ以下にあるIDLファイルを順に処理
 def process_folder(folder_path):
@@ -268,6 +332,9 @@ def process_folder(folder_path):
     # 変換したProtoファイルをコンパイル
     for proto_file in proto_files:
         compile_proto(proto_file, error_files)
+
+    # サービスペア (_Request/_Response) を検出し、ラッパーヘッダー情報を生成
+    generate_service_pairs(folder_path, proto_files)
 
     # コンパイルエラーを表示
     if error_files:
