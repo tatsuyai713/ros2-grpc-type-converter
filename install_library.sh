@@ -20,6 +20,10 @@ echo "=== Step 3/3: Generating access headers ==="
 python3 "${SCRIPT_DIR}/make_access_header.py" "${SRC_DIR}"
 
 echo ""
+echo "=== Installing generated headers ==="
+sudo cp -rf "${SRC_DIR}"/* /opt/grpc-libs/include/
+
+echo ""
 echo "=== Installation complete ==="
 echo "Libraries: /opt/grpc-libs/lib"
 echo "Headers:   /opt/grpc-libs/include"
