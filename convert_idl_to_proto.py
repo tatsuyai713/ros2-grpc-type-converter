@@ -137,6 +137,9 @@ def convert_idl_to_proto(idl_content, include_files, proto_file_path):
         # struct開始を検出
         struct_match = struct_pattern.match(line)
         if struct_match:
+            # 前のstructが閉じられていない場合は閉じる
+            if in_struct:
+                proto_content.append("}")
             struct_name = struct_match.group(1)
             struct_name_grpc = struct_name + "GRPC"
             proto_content.append(f"message {struct_name_grpc} {{")
@@ -168,8 +171,8 @@ def convert_idl_to_proto(idl_content, include_files, proto_file_path):
                 field_index += 1
                 continue
 
-            # 構造体の終了 "}" を検出
-            if line == "}":
+            # 構造体の終了 "}" または "};" を検出
+            if line.startswith("}"):
                 proto_content.append("}")
                 in_struct = False
                 continue
@@ -189,26 +192,29 @@ def convert_idl_to_proto(idl_content, include_files, proto_file_path):
     if basename.endswith('_Response') and current_struct:
         service_base = basename.replace('_Response', '')
         request_proto = basename.replace('_Response', '_Request') + '.proto'
-        request_type = service_base + '_RequestGRPC'
-        response_type = current_struct  # e.g. AddTwoInts_ResponseGRPC
-        service_name = service_base + 'RPCService'
+        # 対応する _Request IDL が存在する場合のみサービスを生成
+        request_idl = proto_file_path.replace('_Response.proto', '_Request.idl')
+        if os.path.exists(request_idl):
+            request_type = service_base + '_RequestGRPC'
+            response_type = current_struct  # e.g. AddTwoInts_ResponseGRPC
+            service_name = service_base + 'RPCService'
 
-        # Import the request proto (if not already imported)
-        import_line = f'import "{request_proto}";'
-        if import_line not in proto_content:
-            # Insert after the last import line
-            last_import_idx = -1
-            for idx, line in enumerate(proto_content):
-                if line.startswith('import '):
-                    last_import_idx = idx
-            if last_import_idx >= 0:
-                proto_content.insert(last_import_idx + 1, import_line)
-            else:
-                proto_content.insert(2, import_line)
+            # Import the request proto (if not already imported)
+            import_line = f'import "{request_proto}";'
+            if import_line not in proto_content:
+                # Insert after the last import line
+                last_import_idx = -1
+                for idx, line in enumerate(proto_content):
+                    if line.startswith('import '):
+                        last_import_idx = idx
+                if last_import_idx >= 0:
+                    proto_content.insert(last_import_idx + 1, import_line)
+                else:
+                    proto_content.insert(2, import_line)
 
-        proto_content.append(f"service {service_name} {{")
-        proto_content.append(f"  rpc CallService({request_type}) returns ({response_type});")
-        proto_content.append("}")
+            proto_content.append(f"service {service_name} {{")
+            proto_content.append(f"  rpc CallService({request_type}) returns ({response_type});")
+            proto_content.append("}")
 
     return "\n".join(proto_content)
 
