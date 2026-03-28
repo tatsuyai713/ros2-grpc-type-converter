@@ -2,8 +2,8 @@
 //
 // Tests:
 //   1. Message accessor (unit tests for generated wrapper classes)
-//   2. Pub/Sub communication (integration test)
-//   3. Service communication (integration test)
+//   2. Pub/Sub communication (integration tests for multiple message types)
+//   3. Service communication (integration tests for services)
 //   4. Node / Timer / Lifecycle API tests
 
 #include <cassert>
@@ -18,8 +18,15 @@
 #include "tf2_msgs/msg/tfmessage.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 #include "builtin_interfaces/msg/time.hpp"
 #include "example_interfaces/srv/addtwoints.hpp"
+#include "sensor_msgs/msg/image.hpp"
+#include "sensor_msgs/msg/imu.hpp"
+#include "sensor_msgs/msg/jointstate.hpp"
+#include "nav_msgs/msg/odometry.hpp"
+#include "sensor_msgs/msg/laserscan.hpp"
+#include "std_srvs/srv/setbool.hpp"
 
 // ============================================================================
 // Test utilities
@@ -323,6 +330,176 @@ void test_service_communication() {
 }
 
 // ============================================================================
+// Test 3b: Sample-based message type tests
+// ============================================================================
+
+void test_cmd_vel_pubsub() {
+    std::cout << "[TEST] Cmd_vel (Twist) Pub/Sub" << std::endl;
+    auto server_node = std::make_shared<rclcpp::Node>("test_cmd_vel_sub",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50070"));
+    std::atomic<bool> received{false};
+    auto subscription = server_node->create_subscription<geometry_msgs::msg::Twist>(
+        "cmd_vel", 10,
+        [&received](const geometry_msgs::msg::Twist& msg) {
+            if (msg.linear().x() > 0) received = true;
+        });
+    std::thread server_thread([&server_node]() {
+        for (int i = 0; i < 50; i++) {
+            server_node->spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    auto client_node = std::make_shared<rclcpp::Node>("test_cmd_vel_pub",
+        rclcpp::NodeOptions().set_connect_address("localhost:50070"));
+    auto publisher = client_node->create_publisher<geometry_msgs::msg::Twist>("cmd_vel", 10);
+    geometry_msgs::msg::Twist msg;
+    msg.linear().x(1.0);
+    msg.angular().z(0.5);
+    publisher->publish(msg);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    TEST_ASSERT(received, "cmd_vel message received");
+    server_node->shutdown_node();
+    server_thread.join();
+}
+
+void test_imu_pubsub() {
+    std::cout << "[TEST] IMU (sensor_msgs::Imu) Pub/Sub" << std::endl;
+    auto server_node = std::make_shared<rclcpp::Node>("test_imu_sub",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50071"));
+    std::atomic<bool> received{false};
+    auto subscription = server_node->create_subscription<sensor_msgs::msg::Imu>(
+        "imu", 10, [&received](const sensor_msgs::msg::Imu&) { received = true; });
+    std::thread server_thread([&server_node]() {
+        for (int i = 0; i < 50; i++) {
+            server_node->spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    auto client_node = std::make_shared<rclcpp::Node>("test_imu_pub",
+        rclcpp::NodeOptions().set_connect_address("localhost:50071"));
+    auto publisher = client_node->create_publisher<sensor_msgs::msg::Imu>("imu", 10);
+    sensor_msgs::msg::Imu msg;
+    msg.linear_acceleration().x(9.81);
+    publisher->publish(msg);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    TEST_ASSERT(received, "imu message received");
+    server_node->shutdown_node();
+    server_thread.join();
+}
+
+void test_joint_state_pubsub() {
+    std::cout << "[TEST] JointState Pub/Sub" << std::endl;
+    auto server_node = std::make_shared<rclcpp::Node>("test_joint_state_sub",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50072"));
+    std::atomic<bool> received{false};
+    auto subscription = server_node->create_subscription<sensor_msgs::msg::JointState>(
+        "joint_state", 10,
+        [&received](const sensor_msgs::msg::JointState& msg) {
+            if (msg.name().size() > 0) received = true;
+        });
+    std::thread server_thread([&server_node]() {
+        for (int i = 0; i < 50; i++) {
+            server_node->spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    auto client_node = std::make_shared<rclcpp::Node>("test_joint_state_pub",
+        rclcpp::NodeOptions().set_connect_address("localhost:50072"));
+    auto publisher = client_node->create_publisher<sensor_msgs::msg::JointState>("joint_state", 10);
+    sensor_msgs::msg::JointState msg;
+    msg.name().push_back("joint_0");
+    msg.position().push_back(1.5);
+    publisher->publish(msg);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    TEST_ASSERT(received, "joint_state message received");
+    server_node->shutdown_node();
+    server_thread.join();
+}
+
+void test_odometry_pubsub() {
+    std::cout << "[TEST] Odometry Pub/Sub" << std::endl;
+    auto server_node = std::make_shared<rclcpp::Node>("test_odom_sub",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50073"));
+    std::atomic<bool> received{false};
+    auto subscription = server_node->create_subscription<nav_msgs::msg::Odometry>(
+        "odom", 10, [&received](const nav_msgs::msg::Odometry&) { received = true; });
+    std::thread server_thread([&server_node]() {
+        for (int i = 0; i < 50; i++) {
+            server_node->spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    auto client_node = std::make_shared<rclcpp::Node>("test_odom_pub",
+        rclcpp::NodeOptions().set_connect_address("localhost:50073"));
+    auto publisher = client_node->create_publisher<nav_msgs::msg::Odometry>("odom", 10);
+    nav_msgs::msg::Odometry msg;
+    msg.pose().pose().position().x(1.5);
+    publisher->publish(msg);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    TEST_ASSERT(received, "odometry message received");
+    server_node->shutdown_node();
+    server_thread.join();
+}
+
+void test_laser_scan_pubsub() {
+    std::cout << "[TEST] LaserScan Pub/Sub" << std::endl;
+    auto server_node = std::make_shared<rclcpp::Node>("test_scan_sub",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50074"));
+    std::atomic<bool> received{false};
+    auto subscription = server_node->create_subscription<sensor_msgs::msg::LaserScan>(
+        "scan", 10, [&received](const sensor_msgs::msg::LaserScan&) { received = true; });
+    std::thread server_thread([&server_node]() {
+        for (int i = 0; i < 50; i++) {
+            server_node->spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    auto client_node = std::make_shared<rclcpp::Node>("test_scan_pub",
+        rclcpp::NodeOptions().set_connect_address("localhost:50074"));
+    auto publisher = client_node->create_publisher<sensor_msgs::msg::LaserScan>("scan", 10);
+    sensor_msgs::msg::LaserScan msg;
+    msg.angle_min(-1.57f);
+    msg.angle_max(1.57f);
+    publisher->publish(msg);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    TEST_ASSERT(received, "laser_scan message received");
+    server_node->shutdown_node();
+    server_thread.join();
+}
+
+void test_setbool_service() {
+    std::cout << "[TEST] SetBool Service" << std::endl;
+    auto server_node = std::make_shared<rclcpp::Node>("test_setbool_server",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50075"));
+    auto service = server_node->create_service<std_srvs::srv::SetBool>(
+        "test_set_bool",
+        [](const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+           std::shared_ptr<std_srvs::srv::SetBool::Response> res) {
+            res->success(req->data());
+        });
+    std::thread server_thread([&server_node]() {
+        server_node->spin_some();
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    auto client_node = std::make_shared<rclcpp::Node>("test_setbool_client",
+        rclcpp::NodeOptions().set_connect_address("localhost:50075"));
+    auto client = client_node->create_client<std_srvs::srv::SetBool>("test_set_bool");
+    auto req = std::make_shared<std_srvs::srv::SetBool::Request>();
+    req->data(true);
+    auto future = client->async_send_request(req);
+    auto response = future.get();
+    TEST_ASSERT_EQ(response->success(), true, "setbool(true) success");
+    server_node->shutdown_node();
+    server_thread.join();
+}
+
+// ============================================================================
 // Test 4: Node / Timer / Lifecycle API tests
 // ============================================================================
 
@@ -462,6 +639,12 @@ int main(int argc, char** argv) {
     std::cout << std::endl << "--- Integration Tests ---" << std::endl;
     test_pubsub_communication();
     test_service_communication();
+    test_cmd_vel_pubsub();
+    test_imu_pubsub();
+    test_joint_state_pubsub();
+    test_odometry_pubsub();
+    test_laser_scan_pubsub();
+    test_setbool_service();
 
     // --- Summary ---
     std::cout << std::endl;
