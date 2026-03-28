@@ -749,8 +749,23 @@ private:
     if member_vars:
         copy_initializers = []
         for field_name, info in fields.items():
-            if info['is_message']:
-                copy_initializers.append(f"{field_name}_(other.{field_name}_)")
+            is_bytes = info.get('is_bytes', False)
+            if is_bytes and not info['is_message']:
+                # BytesFieldWrapper: re-initialize from the shared grpc_ pointer
+                copy_initializers.append(f"{field_name}_(grpc_->mutable_{field_name}())")
+            elif info['is_message']:
+                cpp_type = (
+                    info.get('getter', {}).get('return_type') or
+                    info.get('setter', {}).get('param_type') or
+                    info.get('mutable', {}).get('return_type') or
+                    'void'
+                ).strip()
+                underlying_type = cpp_type.replace('GRPC', '').strip()
+                if "RepeatedField" in underlying_type or "RepeatedPtrField" in underlying_type:
+                    # Wrapper types: re-initialize from the shared grpc_ pointer
+                    copy_initializers.append(f"{field_name}_(other.{field_name}_)")
+                else:
+                    copy_initializers.append(f"{field_name}_(other.{field_name}_)")
         if copy_initializers:
             copy_constructor += ",\n          " + ",\n          ".join(copy_initializers)
     copy_constructor += "\n    {}"
