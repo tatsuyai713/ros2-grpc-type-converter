@@ -1,16 +1,16 @@
-// grpc_rcl.hpp — Backward-compatible wrapper
+// lwrcl_grpc.hpp — Backward-compatible wrapper
 //
 // This header is DEPRECATED. Use <rclcpp/rclcpp.hpp> instead.
 // It is kept only to avoid breaking existing code.
 
-#ifndef GRPC_NODE_HPP_
-#define GRPC_NODE_HPP_
+#ifndef LWRCL_GRPC_HPP_
+#define LWRCL_GRPC_HPP_
 
-#pragma message("grpc_rcl.hpp is deprecated. Please use <rclcpp/rclcpp.hpp> instead.")
+#pragma message("lwrcl_grpc.hpp is deprecated. Please use <rclcpp/rclcpp.hpp> instead.")
 
 #include "rclcpp/rclcpp.hpp"
 
-namespace grpc_rcl {
+namespace lwrcl_grpc {
 
 // Lifecycle
 inline void init(int& argc, char**& argv) {
@@ -21,7 +21,7 @@ inline void shutdown() {
     rclcpp::shutdown();
 }
 
-// Re-export types under grpc_rcl namespace for backward compat
+// Re-export types under lwrcl_grpc namespace for backward compat
 template <typename T>
 using Publisher = rclcpp::Publisher<T>;
 
@@ -32,7 +32,7 @@ class Node {
 public:
     explicit Node(const std::string& address)
         : node_(std::make_shared<rclcpp::Node>(
-              "grpc_rcl_node",
+              "lwrcl_grpc_node",
               // Auto-detect server vs connect address
               (address.find("0.0.0.0") == 0 || address.find("[::]") == 0)
                   ? rclcpp::NodeOptions().set_server_address(address)
@@ -43,7 +43,7 @@ public:
     std::shared_ptr<rclcpp::Publisher<T>> create_publisher(
         const std::string& topic_name) {
         // For publisher, need connect address
-        if (node_->get_name() == "grpc_rcl_node" &&
+        if (node_->get_name() == "lwrcl_grpc_node" &&
             (address_.find("0.0.0.0") != 0 && address_.find("[::]") != 0)) {
             return node_->create_publisher<T>(topic_name);
         }
@@ -83,6 +83,6 @@ private:
     std::string address_;
 };
 
-}  // namespace grpc_rcl
+}  // namespace lwrcl_grpc
 
-#endif  // GRPC_NODE_HPP_
+#endif  // LWRCL_GRPC_HPP_
