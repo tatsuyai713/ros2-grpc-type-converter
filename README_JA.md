@@ -311,8 +311,8 @@ RCLCPP_INFO_STREAM(logger, "Stream: " << value);
 #### ステップ 1: リポジトリのクローン
 
 ```bash
-git clone --recursive https://github.com/tatsuyai713/ros2-grpc-type-converter.git
-cd ros2-grpc-type-converter
+git clone --recursive https://github.com/tatsuyai713/lwrcl-grpc.git
+cd lwrcl-grpc
 ```
 
 `--recursive` なしでクローンした場合:
