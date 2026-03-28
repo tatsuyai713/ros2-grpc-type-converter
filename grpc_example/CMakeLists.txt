@@ -28,7 +28,7 @@ set(LOCAL_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ros-data-types-for-fastdds/src
 
 # ヘッダーパスを指定
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
     ${LOCAL_SRC_DIR}
     ${LOCAL_SRC_DIR}/std_msgs/msg
     ${LOCAL_SRC_DIR}/builtin_interfaces/msg
