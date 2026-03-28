@@ -41,22 +41,6 @@
 
 // ============================================================================
 // rclcpp — ROS 2 Compatible API over gRPC
-//
-// This header provides a programming interface that closely mirrors the
-// rclcpp (ROS 2 C++ client library) API.  Communication is performed via
-// gRPC instead of DDS, so explicit network addresses are required through
-// NodeOptions rather than relying on automatic discovery.
-//
-// Supported features:
-//   - Node (with server & client address configuration)
-//   - Publisher<T>    (client-side, sends messages to a remote server)
-//   - Subscription<T> (server-side, receives messages via gRPC service)
-//   - WallTimer       (periodic timer with callback)
-//   - Service<SrvT>   (server-side, handles ROS2-style request/response)
-//   - Client<SrvT>    (client-side, sends requests and awaits responses)
-//   - Logger + RCLCPP_INFO / WARN / ERROR / DEBUG macros
-//   - rclcpp::init / shutdown / spin / spin_some / ok
-//   - QoS (simplified, kept for API compatibility)
 // ============================================================================
 
 namespace rclcpp {
@@ -85,11 +69,41 @@ inline std::condition_variable& g_shutdown_cv() {
     return cv;
 }
 
+// Timer CV registry for prompt shutdown notification
+inline std::mutex& g_timer_registry_mutex() {
+    static std::mutex mtx;
+    return mtx;
+}
+
+inline std::vector<std::condition_variable*>& g_timer_cvs() {
+    static std::vector<std::condition_variable*> cvs;
+    return cvs;
+}
+
+inline void register_timer_cv(std::condition_variable* cv) {
+    std::lock_guard<std::mutex> lk(g_timer_registry_mutex());
+    g_timer_cvs().push_back(cv);
+}
+
+inline void unregister_timer_cv(std::condition_variable* cv) {
+    std::lock_guard<std::mutex> lk(g_timer_registry_mutex());
+    auto& cvs = g_timer_cvs();
+    cvs.erase(std::remove(cvs.begin(), cvs.end(), cv), cvs.end());
+}
+
+inline void notify_all_timers() {
+    std::lock_guard<std::mutex> lk(g_timer_registry_mutex());
+    for (auto* cv : g_timer_cvs()) {
+        cv->notify_all();
+    }
+}
+
 // Signal handler for graceful shutdown (SIGINT)
 inline void signal_handler(int signum) {
     (void)signum;
     g_running().store(false);
     g_shutdown_cv().notify_all();
+    notify_all_timers();
 }
 
 }  // namespace detail
@@ -99,7 +113,6 @@ inline void signal_handler(int signum) {
 inline void init(int argc, char* argv[]) {
     detail::g_initialized().store(true);
     detail::g_running().store(true);
-    // Install SIGINT handler for Ctrl+C
     std::signal(SIGINT, detail::signal_handler);
 }
 
@@ -110,6 +123,7 @@ inline bool ok() {
 inline void shutdown() {
     detail::g_running().store(false);
     detail::g_shutdown_cv().notify_all();
+    detail::notify_all_timers();
 }
 
 // ===================== QoS (Simplified) =====================================
@@ -284,19 +298,16 @@ class NodeOptions {
 public:
     NodeOptions() = default;
 
-    /// Set the address this node listens on for incoming subscriptions/services.
     NodeOptions& set_server_address(const std::string& addr) {
         server_address_ = addr;
         return *this;
     }
 
-    /// Set the address this node connects to for publishing/service-client.
     NodeOptions& set_connect_address(const std::string& addr) {
         connect_address_ = addr;
         return *this;
     }
 
-    /// Allow remote clients (default: true). If false, only localhost accepted.
     NodeOptions& set_allow_remote(bool allow) {
         allow_remote_ = allow;
         return *this;
@@ -312,6 +323,55 @@ private:
     bool allow_remote_ = true;
 };
 
+// ===================== Time / Duration (ROS 2 Compatible) ===================
+
+class Duration {
+public:
+    Duration() : nanoseconds_(0) {}
+    explicit Duration(int64_t nanoseconds) : nanoseconds_(nanoseconds) {}
+    Duration(int32_t seconds, uint32_t nanoseconds)
+        : nanoseconds_(static_cast<int64_t>(seconds) * 1000000000LL + nanoseconds) {}
+
+    int64_t nanoseconds() const { return nanoseconds_; }
+    double seconds() const { return nanoseconds_ / 1e9; }
+
+    Duration operator+(const Duration& rhs) const { return Duration(nanoseconds_ + rhs.nanoseconds_); }
+    Duration operator-(const Duration& rhs) const { return Duration(nanoseconds_ - rhs.nanoseconds_); }
+    bool operator<(const Duration& rhs) const { return nanoseconds_ < rhs.nanoseconds_; }
+    bool operator>(const Duration& rhs) const { return nanoseconds_ > rhs.nanoseconds_; }
+    bool operator<=(const Duration& rhs) const { return nanoseconds_ <= rhs.nanoseconds_; }
+    bool operator>=(const Duration& rhs) const { return nanoseconds_ >= rhs.nanoseconds_; }
+    bool operator==(const Duration& rhs) const { return nanoseconds_ == rhs.nanoseconds_; }
+    bool operator!=(const Duration& rhs) const { return nanoseconds_ != rhs.nanoseconds_; }
+
+private:
+    int64_t nanoseconds_;
+};
+
+class Time {
+public:
+    Time() : nanoseconds_(0) {}
+    explicit Time(int64_t nanoseconds) : nanoseconds_(nanoseconds) {}
+    Time(int32_t sec, uint32_t nanosec)
+        : nanoseconds_(static_cast<int64_t>(sec) * 1000000000LL + nanosec) {}
+
+    int64_t nanoseconds() const { return nanoseconds_; }
+    double seconds() const { return nanoseconds_ / 1e9; }
+
+    Duration operator-(const Time& rhs) const { return Duration(nanoseconds_ - rhs.nanoseconds_); }
+    Time operator+(const Duration& d) const { return Time(nanoseconds_ + d.nanoseconds()); }
+    Time operator-(const Duration& d) const { return Time(nanoseconds_ - d.nanoseconds()); }
+    bool operator<(const Time& rhs) const { return nanoseconds_ < rhs.nanoseconds_; }
+    bool operator>(const Time& rhs) const { return nanoseconds_ > rhs.nanoseconds_; }
+    bool operator<=(const Time& rhs) const { return nanoseconds_ <= rhs.nanoseconds_; }
+    bool operator>=(const Time& rhs) const { return nanoseconds_ >= rhs.nanoseconds_; }
+    bool operator==(const Time& rhs) const { return nanoseconds_ == rhs.nanoseconds_; }
+    bool operator!=(const Time& rhs) const { return nanoseconds_ != rhs.nanoseconds_; }
+
+private:
+    int64_t nanoseconds_;
+};
+
 // ===================== WallTimer ============================================
 
 class WallTimer {
@@ -320,11 +380,13 @@ public:
 
     WallTimer(std::chrono::nanoseconds period, std::function<void()> callback)
         : period_(period), callback_(std::move(callback)), canceled_(false) {
+        detail::register_timer_cv(&timer_cv_);
         thread_ = std::thread([this]() {
+            auto next_time = std::chrono::steady_clock::now() + period_;
             while (!canceled_.load() && rclcpp::ok()) {
                 {
-                    std::unique_lock<std::mutex> lk(detail::g_shutdown_mutex());
-                    detail::g_shutdown_cv().wait_for(lk, period_, [this]() {
+                    std::unique_lock<std::mutex> lk(timer_mutex_);
+                    timer_cv_.wait_until(lk, next_time, [this]() {
                         return canceled_.load() || !rclcpp::ok();
                     });
                 }
@@ -336,6 +398,12 @@ public:
                                   << std::endl;
                     }
                 }
+                next_time += period_;
+                // If we fell behind, skip to next future slot
+                auto now = std::chrono::steady_clock::now();
+                if (next_time < now) {
+                    next_time = now + period_;
+                }
             }
         });
     }
@@ -343,6 +411,7 @@ public:
     ~WallTimer() {
         cancel();
         if (thread_.joinable()) thread_.join();
+        detail::unregister_timer_cv(&timer_cv_);
     }
 
     // Non-copyable
@@ -351,7 +420,7 @@ public:
 
     void cancel() {
         canceled_.store(true);
-        detail::g_shutdown_cv().notify_all();
+        timer_cv_.notify_all();
     }
     bool is_canceled() const { return canceled_.load(); }
 
@@ -359,6 +428,8 @@ private:
     std::chrono::nanoseconds period_;
     std::function<void()> callback_;
     std::atomic<bool> canceled_;
+    std::mutex timer_mutex_;
+    std::condition_variable timer_cv_;
     std::thread thread_;
 };
 
@@ -380,15 +451,14 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         grpc::ClientContext context;
         context.AddMetadata("topic-name", topic_name_);
-        stub_holder_.get_grpc()->CopyFrom(*msg.get_grpc());
-        grpc::Status status = stub_holder_.send(context);
+        // Zero-copy: send msg's grpc data directly without CopyFrom
+        grpc::Status status = stub_holder_.send_msg(context, *msg.get_grpc());
         if (!status.ok()) {
             std::cerr << "[WARN] Publish failed on '" << topic_name_
                       << "': " << status.error_message() << std::endl;
         }
     }
 
-    /// Overload accepting non-const ref for backward compatibility.
     void publish(MessageT& msg) {
         publish(static_cast<const MessageT&>(msg));
     }
@@ -430,10 +500,8 @@ public:
         grpc::ServerContext* context,
         const decltype(MessageT::type_)* request,
         google::protobuf::Empty* response) override {
-        // Extract client IP
         std::string client_ip = detail::parse_ip(context->peer());
 
-        // Extract topic name from metadata
         auto metadata = context->client_metadata();
         auto topic_iter = metadata.find("topic-name");
         if (topic_iter == metadata.end()) {
@@ -443,16 +511,14 @@ public:
         std::string topic_name(topic_iter->second.data(),
                                topic_iter->second.length());
 
-        // Check access control
         if (!client_manager_.is_client_allowed(client_ip, topic_name)) {
             return grpc::Status(grpc::StatusCode::PERMISSION_DENIED,
                                 "Client not allowed for topic: " + topic_name);
         }
 
-        // Invoke callback
+        // Zero-copy: wrap the incoming request directly (callback is const&)
         if (callback_) {
-            decltype(MessageT::type_) msg_grpc(*request);
-            MessageT message(&msg_grpc);
+            MessageT message(const_cast<decltype(MessageT::type_)*>(request));
             callback_(message);
         }
 
@@ -468,18 +534,6 @@ private:
 };
 
 // ===================== Service (Server-Side) ================================
-//
-// ROS 2 Service pattern: a server receives a Request and returns a Response.
-// The service type SrvT must define:
-//   SrvT::Request  — the request wrapper type
-//   SrvT::Response — the response wrapper type
-//   SrvT::ServiceBase — the gRPC Service::Service base class
-//   SrvT::GrpcRequestType  — the protobuf request type
-//   SrvT::GrpcResponseType — the protobuf response type
-//
-// Generated service header files (produced by make_access_header.py for
-// _Request/_Response pairs) provide these type aliases automatically.
-// ============================================================================
 
 template <typename SrvT>
 class Service final : public SrvT::ServiceBase {
@@ -506,7 +560,6 @@ public:
         typename SrvT::GrpcResponseType* response) override {
         std::string client_ip = detail::parse_ip(context->peer());
 
-        // Extract service name from metadata
         auto metadata = context->client_metadata();
         auto name_iter = metadata.find("service-name");
         if (name_iter == metadata.end()) {
@@ -522,11 +575,12 @@ public:
         }
 
         if (callback_) {
-            typename SrvT::GrpcRequestType req_grpc(*request);
-            auto req = std::make_shared<typename SrvT::Request>(&req_grpc);
-            auto res = std::make_shared<typename SrvT::Response>();
+            // Zero-copy: wrap request directly, write response directly
+            auto req = std::make_shared<typename SrvT::Request>(
+                const_cast<typename SrvT::GrpcRequestType*>(request));
+            auto res = std::make_shared<typename SrvT::Response>(response);
             callback_(req, res);
-            response->CopyFrom(*res->get_grpc());
+            // No CopyFrom needed: res wrote directly into 'response'
         }
 
         return grpc::Status::OK;
@@ -564,16 +618,12 @@ public:
             grpc::ClientContext context;
             context.AddMetadata("service-name", service_name_);
 
-            typename SrvT::GrpcResponseType grpc_response;
+            // Allocate owned response directly, let gRPC write into it
+            auto owned_response = std::make_shared<typename SrvT::Response>();
             grpc::Status status = stub_->CallService(
-                &context, *request->get_grpc(), &grpc_response);
+                &context, *request->get_grpc(), owned_response->get_grpc());
 
             if (status.ok()) {
-                auto response = std::make_shared<typename SrvT::Response>(
-                    &grpc_response);
-                // Make a deep copy so the response outlives the grpc_response
-                auto owned_response = std::make_shared<typename SrvT::Response>();
-                owned_response->get_grpc()->CopyFrom(*response->get_grpc());
                 promise->set_value(owned_response);
             } else {
                 promise->set_exception(std::make_exception_ptr(
@@ -631,8 +681,6 @@ class Node {
 public:
     using SharedPtr = std::shared_ptr<Node>;
 
-    /// Construct a Node with a name and options specifying server/connect
-    /// addresses.
     explicit Node(const std::string& name,
                   const NodeOptions& options = NodeOptions())
         : name_(name),
@@ -654,7 +702,6 @@ public:
         shutdown_node();
     }
 
-    // Non-copyable
     Node(const Node&) = delete;
     Node& operator=(const Node&) = delete;
 
@@ -663,15 +710,13 @@ public:
     template <typename MessageT>
     typename Publisher<MessageT>::SharedPtr create_publisher(
         const std::string& topic_name, size_t qos_depth = 10) {
-        (void)qos_depth;  // QoS depth not used in gRPC transport
+        (void)qos_depth;
         if (!channel_) {
             throw std::runtime_error(
                 "Node '" + name_ +
                 "' has no connect_address. Set it via NodeOptions to publish.");
         }
-        auto pub =
-            std::make_shared<Publisher<MessageT>>(channel_, topic_name);
-        return pub;
+        return std::make_shared<Publisher<MessageT>>(channel_, topic_name);
     }
 
     template <typename MessageT>
@@ -735,15 +780,13 @@ public:
                 "Node '" + name_ +
                 "' has no connect_address. Set it via NodeOptions for clients.");
         }
-        auto client =
-            std::make_shared<Client<SrvT>>(channel_, service_name);
-        return client;
+        return std::make_shared<Client<SrvT>>(channel_, service_name);
     }
 
     // ----- Timer ------------------------------------------------------------
 
     WallTimer::SharedPtr create_wall_timer(
-        std::chrono::milliseconds period, std::function<void()> callback) {
+        std::chrono::nanoseconds period, std::function<void()> callback) {
         auto timer = std::make_shared<WallTimer>(period, std::move(callback));
         timers_.push_back(timer);
         return timer;
@@ -753,7 +796,7 @@ public:
     WallTimer::SharedPtr create_wall_timer(DurationT period,
                                            std::function<void()> callback) {
         return create_wall_timer(
-            std::chrono::duration_cast<std::chrono::milliseconds>(period),
+            std::chrono::duration_cast<std::chrono::nanoseconds>(period),
             std::move(callback));
     }
 
@@ -762,9 +805,15 @@ public:
     Logger get_logger() const { return logger_; }
     const std::string& get_name() const { return name_; }
 
+    Time now() const {
+        auto tp = std::chrono::system_clock::now();
+        auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            tp.time_since_epoch()).count();
+        return Time(ns);
+    }
+
     // ----- Spin (internal) --------------------------------------------------
 
-    /// Start the gRPC server (if configured) and block until shutdown.
     void spin() {
         if (has_server_ && !server_built_) {
             server_ = builder_.BuildAndStart();
@@ -780,21 +829,17 @@ public:
         }
 
         if (server_) {
-            // Wait on shutdown signal
             std::unique_lock<std::mutex> lk(detail::g_shutdown_mutex());
             detail::g_shutdown_cv().wait(lk, []() { return !rclcpp::ok(); });
             server_->Shutdown();
         } else {
-            // Publisher-only or timer-only node: wait until shutdown
             std::unique_lock<std::mutex> lk(detail::g_shutdown_mutex());
             detail::g_shutdown_cv().wait(lk, []() { return !rclcpp::ok(); });
         }
     }
 
-    /// Non-blocking spin: process pending work then return.
+    /// Non-blocking spin: ensure server is started then return immediately.
     void spin_some() {
-        // In gRPC model, server callbacks are handled by gRPC threads.
-        // This is provided for API compatibility.
         if (has_server_ && !server_built_) {
             server_ = builder_.BuildAndStart();
             server_built_ = true;
@@ -803,7 +848,7 @@ public:
                             options_.server_address().c_str());
             }
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // No sleep: gRPC handles callbacks on its own threads.
     }
 
     void shutdown_node() {
@@ -836,45 +881,59 @@ private:
 
 // ===================== TimerBase (ROS 2 Compatible Alias) ===================
 
-/// ROS 2 uses TimerBase::SharedPtr as the return type of create_wall_timer().
-/// Provide an alias so user code can use either WallTimer or TimerBase.
 using TimerBase = WallTimer;
 
 // ===================== Free-Standing Spin Functions =========================
 
-/// Block until rclcpp::shutdown() or SIGINT.
 inline void spin(Node::SharedPtr node) {
     if (node) {
         node->spin();
     }
 }
 
-/// Non-blocking spin; suitable for manual loop usage.
 inline void spin_some(Node::SharedPtr node) {
     if (node) {
         node->spin_some();
     }
 }
 
-// ===================== Executors (API Stubs) ================================
+/// Spin the node until the given future completes.
+template <typename FutureT>
+void spin_until_future_complete(
+    Node::SharedPtr node,
+    const FutureT& future,
+    std::chrono::nanoseconds timeout = std::chrono::nanoseconds(-1))
+{
+    if (node) {
+        node->spin_some();  // Ensure server is started
+    }
+    if (timeout.count() < 0) {
+        future.wait();
+    } else {
+        future.wait_for(timeout);
+    }
+}
+
+// ===================== Executors ============================================
 
 namespace executors {
 
-/// Single-threaded executor (delegates to node->spin()).
 class SingleThreadedExecutor {
 public:
     void add_node(Node::SharedPtr node) { nodes_.push_back(node); }
 
     void spin() {
         if (nodes_.empty()) return;
-        // Start spin for the first node with a server, others just wait
-        std::vector<std::thread> threads;
-        for (size_t i = 1; i < nodes_.size(); ++i) {
-            threads.emplace_back([node = nodes_[i]]() { node->spin(); });
+        // Start all gRPC servers
+        for (auto& node : nodes_) {
+            node->spin_some();
         }
-        nodes_[0]->spin();
-        for (auto& t : threads) {
-            if (t.joinable()) t.join();
+        // Block on shutdown signal (single thread)
+        std::unique_lock<std::mutex> lk(detail::g_shutdown_mutex());
+        detail::g_shutdown_cv().wait(lk, []() { return !rclcpp::ok(); });
+        // Shutdown all nodes
+        for (auto& node : nodes_) {
+            node->shutdown_node();
         }
     }
 

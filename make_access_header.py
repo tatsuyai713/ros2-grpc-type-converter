@@ -52,6 +52,32 @@ def parse_pb_header(pb_header_path):
         'uint32_t', 'uint64_t'
     ]
 
+    # Pre-compile regex patterns (once, not per-line)
+    # Getter: const <type>& <field>() const;
+    getter_pattern = re.compile(
+        r'const\s+([^\s]+(?:\s*::\s*[^\s]+)*)&\s+(\w+)\s*\(\)\s*const\s*;'
+    )
+    # Setter: void set_<field>(const <type>& value);
+    setter_pattern = re.compile(
+        r'void\s+set_(\w+)\s*\(\s*(?:const\s+)?([^\s]+(?:\s*::\s*[^\s]+)*)\s*(?:&)?\s+value\s*\)\s*;'
+    )
+    # Mutable: <type>* mutable_<field>();
+    mutable_pattern = re.compile(
+        r'([^\s]+(?:\s*::\s*[^\s]+)*)\*\s+mutable_(\w+)\s*\(\)\s*;'
+    )
+    # add_<field>(): for repeated fields
+    add_pattern = re.compile(
+        r'([^\s]+(?:\s*::\s*[^\s]+)*)\*\s+add_(\w+)\s*\(\)\s*;'
+    )
+    # size_<field>(): for repeated fields
+    size_pattern = re.compile(
+        r'int\s+(\w+)_size\(\)\s*const\s*;'
+    )
+    # set_allocated_<field>(<type>* value);
+    set_allocated_pattern = re.compile(
+        r'void\s+set_allocated_(\w+)\s*\(\s*([^\s]+(?:\s*::\s*[^\s]+)*)\*\s+value\s*\)\s*;'
+    )
+
     # 全体を行単位で解析
     for line in content.splitlines():
         line = line.strip()
@@ -69,31 +95,6 @@ def parse_pb_header(pb_header_path):
             continue
 
 
-        # Getter: const <type>& <field>() const;
-        getter_pattern = re.compile(
-            r'const\s+([^\s]+(?:\s*::\s*[^\s]+)*)&\s+(\w+)\s*\(\)\s*const\s*;'
-        )
-        # Setter: void set_<field>(const <type>& value);
-        setter_pattern = re.compile(
-            r'void\s+set_(\w+)\s*\(\s*(?:const\s+)?([^\s]+(?:\s*::\s*[^\s]+)*)\s*(?:&)?\s+value\s*\)\s*;'
-        )
-        # Mutable: <type>* mutable_<field>();
-        mutable_pattern = re.compile(
-            r'([^\s]+(?:\s*::\s*[^\s]+)*)\*\s+mutable_(\w+)\s*\(\)\s*;'
-        )
-        # add_<field>(): for repeated fields
-        add_pattern = re.compile(
-            r'([^\s]+(?:\s*::\s*[^\s]+)*)\*\s+add_(\w+)\s*\(\)\s*;'
-        )
-        # size_<field>(): for repeated fields
-        size_pattern = re.compile(
-            r'int\s+(\w+)_size\(\)\s*const\s*;'
-        )
-        # set_allocated_<field>(<type>* value);
-        set_allocated_pattern = re.compile(
-            r'void\s+set_allocated_(\w+)\s*\(\s*([^\s]+(?:\s*::\s*[^\s]+)*)\*\s+value\s*\)\s*;'
-        )
-        
         # Getter の解析
         getter_match = getter_pattern.match(line)
         if getter_match:
@@ -751,9 +752,9 @@ private:
 
     # コピーコンストラクタとコピー代入演算子の生成
     copy_constructor = f"""\
-    // コピーコンストラクタ
+    // コピーコンストラクタ (deep copy)
     {class_name}(const {class_name}& other)
-        : grpc_(other.grpc_), data_owned_(false)"""
+        : grpc_(new {grpc_full_class}(*other.grpc_)), data_owned_(true)"""
     if member_vars:
         copy_initializers = []
         for field_name, info in fields.items():
@@ -769,11 +770,21 @@ private:
                     'void'
                 ).strip()
                 underlying_type = cpp_type.replace('GRPC', '').strip()
-                if "RepeatedField" in underlying_type or "RepeatedPtrField" in underlying_type:
-                    # Wrapper types: re-initialize from the shared grpc_ pointer
-                    copy_initializers.append(f"{field_name}_(other.{field_name}_)")
+                if "RepeatedField" in underlying_type and "RepeatedPtrField" not in underlying_type:
+                    # RepeatedFieldWrapper: shares the same underlying repeated field
+                    copy_initializers.append(f"{field_name}_(grpc_->mutable_{field_name}())")
+                elif "RepeatedPtrField" in underlying_type and "std::string" in cpp_type:
+                    # RepeatedStringFieldWrapper: shares the same underlying repeated field
+                    copy_initializers.append(f"{field_name}_(grpc_->mutable_{field_name}())")
+                elif "RepeatedPtrField" in underlying_type:
+                    # RepeatedPtrFieldWrapper: reconstruct from shared grpc_
+                    rpt_type = cpp_type.split('<')[-1].split('>')[0].strip()
+                    rpt_type_without_grpc = rpt_type.replace("GRPC", "")
+                    wrapper_type = f"detail::RepeatedPtrFieldWrapper<{rpt_type_without_grpc}, {rpt_type}>"
+                    copy_initializers.append(f"{field_name}_({wrapper_type}(grpc_->mutable_{field_name}()))")
                 else:
-                    copy_initializers.append(f"{field_name}_(other.{field_name}_)")
+                    # Sub-message pointer: allocate new wrapper to avoid double-delete
+                    copy_initializers.append(f"{field_name}_(new {underlying_type}(grpc_->mutable_{field_name}()))")
         if copy_initializers:
             copy_constructor += ",\n          " + ",\n          ".join(copy_initializers)
     copy_constructor += "\n    {}"
@@ -793,16 +804,34 @@ private:
     {class_name}& operator()(const {class_name}& other)"""
     copy_operator += "\n    {\n        grpc_->CopyFrom(*other.grpc_);\n        return *this;\n    }"
 
-    # =オペレータ
+    # =オペレータ (RepeatedPtrFieldWrapper の再構築を含む)
+    equal_operator_body = "        if (this != &other) {\n            grpc_->CopyFrom(*other.grpc_);"
+    for field_name, info in fields.items():
+        if info['is_message']:
+            cpp_type = (
+                info.get('getter', {}).get('return_type') or
+                info.get('setter', {}).get('param_type') or
+                info.get('mutable', {}).get('return_type') or
+                'void'
+            ).strip()
+            underlying_type = cpp_type.replace('GRPC', '').strip()
+            if "RepeatedPtrField" in underlying_type and "std::string" not in cpp_type:
+                rpt_type = cpp_type.split('<')[-1].split('>')[0].strip()
+                rpt_type_without_grpc = rpt_type.replace("GRPC", "")
+                wrapper_type = f"detail::RepeatedPtrFieldWrapper<{rpt_type_without_grpc}, {rpt_type}>"
+                equal_operator_body += f"\n            {field_name}_ = {wrapper_type}(grpc_->mutable_{field_name}());"
+    equal_operator_body += "\n        }\n        return *this;"
     equal_operator = f"""\
-    {class_name}& operator=(const {class_name}& other)"""
-    equal_operator += "\n    {\n        if (this != &other) {\n            grpc_->CopyFrom(*other.grpc_);\n        }\n        return *this;\n    }"
+    {class_name}& operator=(const {class_name}& other)
+    {{
+{equal_operator_body}
+    }}"""
 
     # Get grpc_ pointer
     get_accessor = f"    {grpc_full_class}* get_grpc() {{ return grpc_; }}\n    const {grpc_full_class}* get_grpc() const {{ return grpc_; }}"
     
-    # Type definition for subscription
-    type_def = f"    {grpc_full_class} type_;"
+    # Type definition for subscription (static to avoid per-instance overhead)
+    type_def = f"    static inline {grpc_full_class} type_;"
 
     # クラス定義
     header_content = f"""\
@@ -834,6 +863,14 @@ public:
             return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Stub not initialized");
         }}
         return stub_->SendGRPC(&context, *grpc_, &empty);
+    }}
+    // ゼロコピー送信: 外部メッセージの grpc データを直接送信
+    grpc::Status send_msg(grpc::ClientContext& context, const {grpc_full_class}& msg) {{
+        google::protobuf::Empty empty;
+        if (!stub_) {{
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Stub not initialized");
+        }}
+        return stub_->SendGRPC(&context, msg, &empty);
     }}
 private:
     {grpc_full_class}* grpc_;

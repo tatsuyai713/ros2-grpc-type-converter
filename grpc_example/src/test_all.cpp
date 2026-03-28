@@ -607,6 +607,174 @@ void test_node_options() {
 }
 
 // ============================================================================
+// Test 5: New API tests (Time, Duration, Node::now(), copy constructor regression)
+// ============================================================================
+
+void test_duration_api() {
+    std::cout << "[TEST] rclcpp::Duration" << std::endl;
+
+    rclcpp::Duration d1(1000000000LL);  // 1 second in nanoseconds
+    TEST_ASSERT_EQ(d1.nanoseconds(), (int64_t)1000000000LL, "Duration ns");
+    TEST_ASSERT_NEAR(d1.seconds(), 1.0, 1e-9, "Duration sec");
+
+    rclcpp::Duration d2(2, 500000000u);  // 2.5 seconds
+    TEST_ASSERT_NEAR(d2.seconds(), 2.5, 1e-9, "Duration(2,500000000) sec");
+
+    // Arithmetic
+    auto d3 = d1 + d2;
+    TEST_ASSERT_NEAR(d3.seconds(), 3.5, 1e-9, "Duration add");
+    auto d4 = d2 - d1;
+    TEST_ASSERT_NEAR(d4.seconds(), 1.5, 1e-9, "Duration sub");
+
+    // Comparison
+    TEST_ASSERT(d1 < d2, "Duration d1 < d2");
+    TEST_ASSERT(d2 > d1, "Duration d2 > d1");
+    TEST_ASSERT(d1 == rclcpp::Duration(1000000000LL), "Duration equality");
+    TEST_ASSERT(d1 != d2, "Duration inequality");
+    TEST_ASSERT(d1 <= d2, "Duration d1 <= d2");
+    TEST_ASSERT(d2 >= d1, "Duration d2 >= d1");
+}
+
+void test_time_api() {
+    std::cout << "[TEST] rclcpp::Time" << std::endl;
+
+    rclcpp::Time t1(10, 500000000u);  // 10.5 seconds
+    TEST_ASSERT_NEAR(t1.seconds(), 10.5, 1e-9, "Time(10,500000000) sec");
+    TEST_ASSERT_EQ(t1.nanoseconds(), (int64_t)10500000000LL, "Time ns");
+
+    rclcpp::Time t2(12, 0);  // 12.0 seconds
+    TEST_ASSERT_NEAR(t2.seconds(), 12.0, 1e-9, "Time(12,0) sec");
+
+    // Time - Time = Duration
+    auto diff = t2 - t1;
+    TEST_ASSERT_NEAR(diff.seconds(), 1.5, 1e-9, "Time diff");
+
+    // Time + Duration = Time
+    rclcpp::Duration d(2000000000LL);  // 2 sec
+    auto t3 = t1 + d;
+    TEST_ASSERT_NEAR(t3.seconds(), 12.5, 1e-9, "Time + Duration");
+
+    // Time - Duration = Time
+    auto t4 = t2 - d;
+    TEST_ASSERT_NEAR(t4.seconds(), 10.0, 1e-9, "Time - Duration");
+
+    // Comparison
+    TEST_ASSERT(t1 < t2, "Time t1 < t2");
+    TEST_ASSERT(t2 > t1, "Time t2 > t1");
+    TEST_ASSERT(t1 != t2, "Time inequality");
+}
+
+void test_node_now() {
+    std::cout << "[TEST] Node::now()" << std::endl;
+
+    auto node = std::make_shared<rclcpp::Node>(
+        "test_now_node",
+        rclcpp::NodeOptions().set_connect_address("localhost:50076"));
+
+    auto before = std::chrono::system_clock::now();
+    rclcpp::Time t = node->now();
+    auto after = std::chrono::system_clock::now();
+
+    auto before_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        before.time_since_epoch()).count();
+    auto after_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        after.time_since_epoch()).count();
+
+    TEST_ASSERT(t.nanoseconds() >= before_ns, "now() >= before");
+    TEST_ASSERT(t.nanoseconds() <= after_ns, "now() <= after");
+    TEST_ASSERT(t.seconds() > 0.0, "now() positive");
+
+    node->shutdown_node();
+}
+
+void test_copy_constructor_regression() {
+    std::cout << "[TEST] Copy constructor regression (deep copy)" << std::endl;
+
+    // Test with Header (has sub-message stamp)
+    {
+        std_msgs::msg::Header h1;
+        h1.frame_id("test_frame");
+        h1.stamp().sec(100);
+        h1.stamp().nanosec(200);
+
+        std_msgs::msg::Header h2(h1);  // Copy construct
+        TEST_ASSERT_EQ(h2.frame_id(), std::string("test_frame"), "copy ctor frame_id");
+        TEST_ASSERT_EQ(static_cast<int32_t>(h2.stamp().sec()), 100, "copy ctor stamp.sec");
+        TEST_ASSERT_EQ(static_cast<uint32_t>(h2.stamp().nanosec()), 200u, "copy ctor stamp.nanosec");
+
+        // Modify copy - original must be unaffected
+        h2.frame_id("modified");
+        h2.stamp().sec(999);
+        TEST_ASSERT_EQ(h1.frame_id(), std::string("test_frame"), "original unchanged after copy mod");
+        TEST_ASSERT_EQ(static_cast<int32_t>(h1.stamp().sec()), 100, "original stamp unchanged");
+    }
+
+    // Test with Image (has bytes field)
+    {
+        sensor_msgs::msg::Image img1;
+        img1.width(640);
+        img1.height(480);
+        img1.encoding() = "rgb8";
+        img1.data().resize(10);
+        for (size_t i = 0; i < 10; ++i) {
+            img1.data()[i] = static_cast<uint8_t>(i);
+        }
+
+        sensor_msgs::msg::Image img2(img1);  // Copy construct
+        TEST_ASSERT_EQ(static_cast<uint32_t>(img2.width()), 640u, "image copy width");
+        TEST_ASSERT_EQ(img2.data().size(), (size_t)10, "image copy data size");
+        TEST_ASSERT_EQ(static_cast<uint8_t>(img2.data()[5]), (uint8_t)5, "image copy data[5]");
+
+        // Modify copy - original must be unaffected
+        img2.data()[5] = 99;
+        TEST_ASSERT_EQ(static_cast<uint8_t>(img1.data()[5]), (uint8_t)5, "original image data unchanged");
+    }
+}
+
+void test_spin_until_future_complete() {
+    std::cout << "[TEST] spin_until_future_complete" << std::endl;
+
+    // Test with AddTwoInts service
+    auto server_node = std::make_shared<rclcpp::Node>(
+        "test_spin_future_server",
+        rclcpp::NodeOptions().set_server_address("0.0.0.0:50077"));
+
+    auto service = server_node->create_service<example_interfaces::srv::AddTwoInts>(
+        "test_add_future",
+        [](const std::shared_ptr<example_interfaces::srv::AddTwoInts::Request> req,
+           std::shared_ptr<example_interfaces::srv::AddTwoInts::Response> res) {
+            res->sum(static_cast<int64_t>(req->a()) + static_cast<int64_t>(req->b()));
+        });
+
+    std::thread server_thread([&server_node]() {
+        server_node->spin_some();
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    auto client_node = std::make_shared<rclcpp::Node>(
+        "test_spin_future_client",
+        rclcpp::NodeOptions().set_connect_address("localhost:50077"));
+
+    auto client = client_node->create_client<example_interfaces::srv::AddTwoInts>("test_add_future");
+
+    auto req = std::make_shared<example_interfaces::srv::AddTwoInts::Request>();
+    req->a(7);
+    req->b(3);
+    auto future = client->async_send_request(req);
+
+    // Use spin_until_future_complete
+    rclcpp::spin_until_future_complete(client_node, future);
+
+    auto response = future.get();
+    TEST_ASSERT_EQ(static_cast<int64_t>(response->sum()), (int64_t)10, "spin_until_future 7+3=10");
+
+    server_node->shutdown_node();
+    server_thread.join();
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -635,6 +803,13 @@ int main(int argc, char** argv) {
     test_node_api();
     test_timer();
 
+    // --- New API tests ---
+    std::cout << std::endl << "--- New API Tests ---" << std::endl;
+    test_duration_api();
+    test_time_api();
+    test_node_now();
+    test_copy_constructor_regression();
+
     // --- Integration tests: communication ---
     std::cout << std::endl << "--- Integration Tests ---" << std::endl;
     test_pubsub_communication();
@@ -645,6 +820,7 @@ int main(int argc, char** argv) {
     test_odometry_pubsub();
     test_laser_scan_pubsub();
     test_setbool_service();
+    test_spin_until_future_complete();
 
     // --- Summary ---
     std::cout << std::endl;
