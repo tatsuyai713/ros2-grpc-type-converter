@@ -2,7 +2,6 @@
 //
 // カメラ画像データを image_raw トピックに送信する例。
 // コンピュータビジョンや画像処理パイプラインで使われるパターン。
-// ※ octet は uint32 に変換されるためメモリ効率は低い
 
 #include <chrono>
 #include <cmath>
@@ -50,7 +49,7 @@ private:
             for (uint32_t x = 0; x < width; ++x) {
                 double val = 128.0 + 127.0 * std::sin(
                     (x + count_ * 2) * 0.1) * std::cos(y * 0.15);
-                msg.data()[y * width + x] = static_cast<uint32_t>(
+                msg.data()[y * width + x] = static_cast<uint8_t>(
                     std::max(0.0, std::min(255.0, val)));
             }
         }

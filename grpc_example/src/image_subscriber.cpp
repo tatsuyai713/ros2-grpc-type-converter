@@ -31,7 +31,7 @@ private:
         uint32_t min_val = 255, max_val = 0;
         double sum = 0.0;
         for (size_t i = 0; i < n; ++i) {
-            uint32_t v = msg.data()[i];
+            uint8_t v = msg.data()[i];
             if (v < min_val) min_val = v;
             if (v > max_val) max_val = v;
             sum += v;

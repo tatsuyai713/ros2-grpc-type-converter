@@ -9,6 +9,7 @@ def parse_pb_header(pb_header_path):
     """
     .pb.h ファイルを解析し、メッセージフィールドの情報を抽出する。
     不要なフィールド (例: Metadata) を除外し、標準型の場合は is_message を False に設定。
+    同ディレクトリの .proto ファイルも参照し、bytes 型フィールドを特定する。
     """
     if not os.path.exists(pb_header_path):
         print(f"Warning: {pb_header_path} does not exist.")
@@ -16,6 +17,17 @@ def parse_pb_header(pb_header_path):
 
     with open(pb_header_path, 'r', encoding='utf-8') as f:
         content = f.read()
+
+    # 対応する .proto ファイルから bytes 型フィールドを特定
+    proto_path = pb_header_path.replace('.pb.h', '.proto')
+    bytes_fields = set()
+    if os.path.exists(proto_path):
+        with open(proto_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                m = re.match(r'bytes\s+(\w+)\s*=', line)
+                if m:
+                    bytes_fields.add(m.group(1))
 
     fields = {}
 
@@ -180,6 +192,10 @@ def parse_pb_header(pb_header_path):
         else:
             info['is_message'] = True   # 標準型以外はメッセージ型
 
+    # bytes 型フィールドをマーク
+    for field_name, info in fields.items():
+        info['is_bytes'] = field_name in bytes_fields
+
     return fields
 
 
@@ -312,6 +328,7 @@ def generate_wrapper_class(directory, namespace, message_name, fields):
     need_repeated_field_wrapper = False
     need_repeated_string_field_wrapper = False
     need_repeated_ptr_field_wrapper = False
+    need_bytes_field_wrapper = False
     proxy_class = ""
 
     for field_name, info in fields.items():
@@ -322,8 +339,19 @@ def generate_wrapper_class(directory, namespace, message_name, fields):
             'void'
         ).strip()
         is_message = info['is_message']
+        is_bytes = info.get('is_bytes', False)
 
-        if is_message:
+        # bytes フィールド (proto bytes → std::string だが uint8 アクセスが必要)
+        if is_bytes and not is_message:
+            need_bytes_field_wrapper = True
+            wrapper_type = "detail::BytesFieldWrapper"
+            member_vars.append(f"    {wrapper_type} {field_name}_;")
+            initializer_list.append(f"{field_name}_(grpc_->mutable_{field_name}())")
+            accessor_methods.append(
+                f"    {wrapper_type}& {field_name}() {{ return {field_name}_; }}\n"
+                f"    const {wrapper_type}& {field_name}() const {{ return {field_name}_; }}"
+            )
+        elif is_message:
             underlying_type = cpp_type.replace('GRPC', '').strip()
             if("RepeatedField" in underlying_type):
                 need_repeated_field_wrapper = True
@@ -611,6 +639,48 @@ private:
 
 } // namespace detail
 #endif // REPEATED_PTR_FIELD_WRAPPER_HPP
+"""
+    if need_bytes_field_wrapper:
+        repeated_field_wrapper_code += """
+#ifndef BYTES_FIELD_WRAPPER_HPP
+#define BYTES_FIELD_WRAPPER_HPP
+namespace detail {
+
+class BytesFieldWrapper {
+public:
+    explicit BytesFieldWrapper(std::string* bytes) : bytes_(bytes) {}
+
+    uint8_t& operator[](size_t index) {
+        return reinterpret_cast<uint8_t&>((*bytes_)[index]);
+    }
+    const uint8_t& operator[](size_t index) const {
+        return reinterpret_cast<const uint8_t&>((*bytes_)[index]);
+    }
+
+    void push_back(uint8_t value) { bytes_->push_back(static_cast<char>(value)); }
+
+    void erase(size_t index) {
+        if (index >= size()) throw std::out_of_range("Index out of range");
+        bytes_->erase(index, 1);
+    }
+
+    size_t size() const { return bytes_->size(); }
+    bool empty() const { return bytes_->empty(); }
+
+    void resize(size_t new_size) { bytes_->resize(new_size, '\\0'); }
+    void resize(size_t new_size, uint8_t value) { bytes_->resize(new_size, static_cast<char>(value)); }
+
+    void clear() { bytes_->clear(); }
+
+    uint8_t* data() { return reinterpret_cast<uint8_t*>(bytes_->data()); }
+    const uint8_t* data() const { return reinterpret_cast<const uint8_t*>(bytes_->data()); }
+
+private:
+    std::string* bytes_;
+};
+
+} // namespace detail
+#endif // BYTES_FIELD_WRAPPER_HPP
 """
 
     # namespace

@@ -19,7 +19,7 @@ type_mapping = {
     "float": "float",
     "double": "double",
     "string": "string",
-    "octet": "uint32",  # octetをuint32に変換するので４倍に増える
+    "octet": "uint32",  # スカラーのみ。sequence<octet> は bytes に変換される
 
     # `unsigned`系の型
     "unsigned short": "uint32",
@@ -47,6 +47,9 @@ def map_type(type_name, enum_names):
     # `sequence<...>`の処理
     if type_name.startswith("sequence<"):
         inner_type = type_name[9:-1].strip()  # sequence<...> の ... 部分を取り出す
+        # octet/uint8/int8 の sequence は bytes 型にする（メモリ効率のため）
+        if inner_type in ("octet", "uint8", "int8"):
+            return "bytes"
         return f"repeated {map_type(inner_type, enum_names)}"
 
     # スペースを含む型名などをチェック
@@ -155,8 +158,10 @@ def convert_idl_to_proto(idl_content, include_files, proto_file_path):
 
                 # 配列の場合
                 if array_size:
-                    # "[]" のみなら repeated 扱い
-                    if array_size == "[]":
+                    # octet/uint8/int8 の配列は bytes 型にする
+                    if field_type in ("octet", "uint8", "int8"):
+                        proto_type = "bytes"
+                    elif array_size == "[]":
                         proto_type = f"repeated {map_type(field_type, enum_names)}"
                     else:
                         # 固定長の場合もとりあえず repeated 扱いにする例
