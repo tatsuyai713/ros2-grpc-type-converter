@@ -4,7 +4,7 @@
 // ロボットアームの状態監視や制御フィードバックで使われるパターン。
 
 #include <rclcpp/rclcpp.hpp>
-#include "sensor_msgs/msg/jointstate.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
 
 class JointStateSubscriber : public rclcpp::Node {
 public:

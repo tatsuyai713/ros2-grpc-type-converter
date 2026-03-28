@@ -5,6 +5,14 @@ import sys
 import re
 from pathlib import Path
 
+
+def camel_to_snake(name):
+    """CamelCase を snake_case に変換する (ROS 2 ヘッダー命名規則)。
+    例: LaserScan -> laser_scan, TFMessage -> tf_message, PointCloud2 -> point_cloud2
+    """
+    s1 = re.sub(r'(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
 def parse_pb_header(pb_header_path):
     """
     .pb.h ファイルを解析し、メッセージフィールドの情報を抽出する。
@@ -259,9 +267,9 @@ def convert_grpc_type_to_include_path(grpc_type: str) -> str:
     if path.startswith("/"):
         path = path[1:]
 
-    # 6) 最後の要素を小文字化
+    # 6) 最後の要素を snake_case 化 (ROS 2 命名規則)
     parts = path.split('/')
-    parts[-1] = parts[-1].lower()
+    parts[-1] = camel_to_snake(parts[-1])
     path = "/".join(parts)
 
     # 7) ".hpp" を付与
@@ -279,7 +287,7 @@ def generate_wrapper_class(directory, namespace, message_name, fields):
     grpc_class_name = f"{message_name}GRPC"
     grpc_full_class = f"{grpc_class_name}" if not namespace else f"{namespace}::{grpc_class_name}"
 
-    header_filename = f"{class_name.lower()}.hpp"
+    header_filename = f"{camel_to_snake(class_name)}.hpp"
     header_path = os.path.join(directory, header_filename)
 
     # インクルードリスト
@@ -952,9 +960,9 @@ def generate_service_wrappers(base_directory):
             namespace_parts = [p for p in Path(relative_path).parts if p != '.']
             namespace = '::'.join(namespace_parts) if namespace_parts else ''
 
-            request_lower = request_type.lower()
-            response_lower = response_type.lower()
-            service_lower = service_name.lower()
+            request_lower = camel_to_snake(request_type)
+            response_lower = camel_to_snake(response_type)
+            service_lower = camel_to_snake(service_name)
 
             # gRPC 名
             grpc_request = f"{request_type}GRPC"

@@ -6,7 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <rclcpp/rclcpp.hpp>
-#include "sensor_msgs/msg/laserscan.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 
 using namespace std::chrono_literals;
 
@@ -64,7 +64,7 @@ private:
     }
 
     rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr publisher_;
-    rclcpp::WallTimer::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_;
     int count_;
 };
 

@@ -9,7 +9,7 @@
 // service wrapper header (make_access_header.py).
 
 #include <rclcpp/rclcpp.hpp>
-#include "example_interfaces/srv/addtwoints.hpp"  // Generated service header
+#include "example_interfaces/srv/add_two_ints.hpp"  // Generated service header
 
 class AddTwoIntsServer : public rclcpp::Node {
 public:

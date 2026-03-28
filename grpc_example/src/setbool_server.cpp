@@ -4,7 +4,7 @@
 // ロボットのモーター有効化/無効化など、真偽値で制御するパターン。
 
 #include <rclcpp/rclcpp.hpp>
-#include "std_srvs/srv/setbool.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 
 class SetBoolServer : public rclcpp::Node {
 public:

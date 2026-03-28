@@ -5,7 +5,7 @@
 
 #include <chrono>
 #include <rclcpp/rclcpp.hpp>
-#include "example_interfaces/srv/addtwoints.hpp"  // Generated service header
+#include "example_interfaces/srv/add_two_ints.hpp"  // Generated service header
 
 using namespace std::chrono_literals;
 
@@ -50,7 +50,7 @@ private:
     }
 
     rclcpp::Client<example_interfaces::srv::AddTwoInts>::SharedPtr client_;
-    rclcpp::WallTimer::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_;
     int count_ = 1;
 };
 

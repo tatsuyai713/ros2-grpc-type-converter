@@ -5,7 +5,7 @@
 
 #include <chrono>
 #include <rclcpp/rclcpp.hpp>
-#include "std_srvs/srv/setbool.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 
 using namespace std::chrono_literals;
 
@@ -40,7 +40,7 @@ private:
     }
 
     rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr client_;
-    rclcpp::WallTimer::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_;
     bool state_;
 };
 

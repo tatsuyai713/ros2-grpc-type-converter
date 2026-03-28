@@ -7,7 +7,7 @@
 
 #include <chrono>
 #include <rclcpp/rclcpp.hpp>
-#include "tf2_msgs/msg/tfmessage.hpp"
+#include "tf2_msgs/msg/tf_message.hpp"
 
 using namespace std::chrono_literals;
 
@@ -59,7 +59,7 @@ private:
     }
 
     rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr publisher_;
-    rclcpp::WallTimer::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_;
     int count_;
 };
 

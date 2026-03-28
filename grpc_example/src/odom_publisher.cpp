@@ -66,7 +66,7 @@ private:
     }
 
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr publisher_;
-    rclcpp::WallTimer::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_;
     double x_, y_, theta_;
     int count_;
 };

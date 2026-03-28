@@ -15,18 +15,18 @@
 #include <string>
 
 #include <rclcpp/rclcpp.hpp>
-#include "tf2_msgs/msg/tfmessage.hpp"
+#include "tf2_msgs/msg/tf_message.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "builtin_interfaces/msg/time.hpp"
-#include "example_interfaces/srv/addtwoints.hpp"
+#include "example_interfaces/srv/add_two_ints.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/imu.hpp"
-#include "sensor_msgs/msg/jointstate.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
 #include "nav_msgs/msg/odometry.hpp"
-#include "sensor_msgs/msg/laserscan.hpp"
-#include "std_srvs/srv/setbool.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 
 // ============================================================================
 // Test utilities

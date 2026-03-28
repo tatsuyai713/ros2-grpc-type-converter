@@ -45,7 +45,7 @@ private:
     }
 
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr publisher_;
-    rclcpp::WallTimer::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_;
     int count_;
 };
 

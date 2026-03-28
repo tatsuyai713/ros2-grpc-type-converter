@@ -72,7 +72,7 @@ private:
     }
 
     rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr publisher_;
-    rclcpp::WallTimer::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_;
     int count_;
 };
 

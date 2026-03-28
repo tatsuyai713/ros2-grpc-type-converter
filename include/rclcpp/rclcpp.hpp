@@ -834,6 +834,12 @@ private:
     std::vector<WallTimer::SharedPtr> timers_;
 };
 
+// ===================== TimerBase (ROS 2 Compatible Alias) ===================
+
+/// ROS 2 uses TimerBase::SharedPtr as the return type of create_wall_timer().
+/// Provide an alias so user code can use either WallTimer or TimerBase.
+using TimerBase = WallTimer;
+
 // ===================== Free-Standing Spin Functions =========================
 
 /// Block until rclcpp::shutdown() or SIGINT.

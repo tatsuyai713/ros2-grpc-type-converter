@@ -6,7 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <rclcpp/rclcpp.hpp>
-#include "sensor_msgs/msg/jointstate.hpp"
+#include "sensor_msgs/msg/joint_state.hpp"
 
 using namespace std::chrono_literals;
 
@@ -72,7 +72,7 @@ private:
     }
 
     rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr publisher_;
-    rclcpp::WallTimer::SharedPtr timer_;
+    rclcpp::TimerBase::SharedPtr timer_;
     int count_;
 };
 

@@ -5,7 +5,7 @@
 // the "tf" topic and prints the received transforms.
 
 #include <rclcpp/rclcpp.hpp>
-#include "tf2_msgs/msg/tfmessage.hpp"
+#include "tf2_msgs/msg/tf_message.hpp"
 
 class TFSubscriber : public rclcpp::Node {
 public:

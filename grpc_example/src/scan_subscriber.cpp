@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <rclcpp/rclcpp.hpp>
-#include "sensor_msgs/msg/laserscan.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 
 class ScanSubscriber : public rclcpp::Node {
 public:
