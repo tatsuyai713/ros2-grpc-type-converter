@@ -1,4 +1,4 @@
-# ros2-grpc-type-converter
+# lwrcl-grpc
 
 **Language:** [English (current)](#) | [日本語](README_JA.md)
 
@@ -405,7 +405,7 @@ export LD_LIBRARY_PATH=/opt/grpc/lib:/opt/grpc-libs/lib
 Expected output:
 ```
 ========================================
-  ros2-grpc-type-converter Test Suite
+  lwrcl-grpc Test Suite
 ========================================
 ...
 ========================================

@@ -1,4 +1,4 @@
-# ros2-grpc-type-converter
+# lwrcl-grpc
 
 **言語:** [日本語（現在）](#) | [English](README.md)
 
@@ -405,7 +405,7 @@ export LD_LIBRARY_PATH=/opt/grpc/lib:/opt/grpc-libs/lib
 期待される出力：
 ```
 ========================================
-  ros2-grpc-type-converter Test Suite
+  lwrcl-grpc Test Suite
 ========================================
 ...
 ========================================

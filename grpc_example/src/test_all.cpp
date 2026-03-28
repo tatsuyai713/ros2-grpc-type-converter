@@ -1,4 +1,4 @@
-// test_all.cpp — Automated tests for ros2-grpc-type-converter
+// test_all.cpp — Automated tests for lwrcl-grpc
 //
 // Tests:
 //   1. Message accessor (unit tests for generated wrapper classes)
@@ -612,7 +612,7 @@ void test_node_options() {
 
 int main(int argc, char** argv) {
     std::cout << "========================================" << std::endl;
-    std::cout << "  ros2-grpc-type-converter Test Suite" << std::endl;
+    std::cout << "  lwrcl-grpc Test Suite" << std::endl;
     std::cout << "========================================" << std::endl;
 
     rclcpp::init(argc, argv);
