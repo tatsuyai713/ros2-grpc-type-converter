@@ -309,7 +309,9 @@ def generate_wrapper_class(directory, namespace, message_name, fields):
     sendgrpc_sync_to_grpc = []
     accessor_methods = []
     delete_members = []
-    repeated_field_wrapper_code = ""
+    need_repeated_field_wrapper = False
+    need_repeated_string_field_wrapper = False
+    need_repeated_ptr_field_wrapper = False
     proxy_class = ""
 
     for field_name, info in fields.items():
@@ -324,57 +326,7 @@ def generate_wrapper_class(directory, namespace, message_name, fields):
         if is_message:
             underlying_type = cpp_type.replace('GRPC', '').strip()
             if("RepeatedField" in underlying_type):
-                # ラッパークラス内で使う detail 名前空間の定義 (RepeatedFieldWrapper)
-                repeated_field_wrapper_code = """
-#ifndef REPEATED_FIELD_WRAPPER_HPP
-#define REPEATED_FIELD_WRAPPER_HPP
-namespace detail {
-
-template <typename T>
-class RepeatedFieldWrapper {
-public:
-    explicit RepeatedFieldWrapper(::google::protobuf::RepeatedField<T>* field) : field_(field) {}
-
-    // operator[]
-    T& operator[](size_t index) { 
-        if (!field_) {
-            throw std::runtime_error("RepeatedPtrField is not initialized");
-        }
-        return *field_->Mutable(index); 
-    }
-    const T& operator[](size_t index) const { 
-        if (!field_) {
-            throw std::runtime_error("RepeatedPtrField is not initialized");
-        }
-        return field_->Get(index); 
-    }
-
-    // push_back
-    void push_back(const T& value) { field_->Add(value); }
-
-    // erase
-    void erase(size_t index) {
-        if (index >= size()) throw std::out_of_range("Index out of range");
-        field_->DeleteSubrange(index, 1);
-    }
-
-    // size, empty
-    size_t size() const { return field_->size(); }
-    bool empty() const { return field_->empty(); }
-    
-    // resize
-    void resize(size_t new_size) { field_->Resize(new_size, T()); }
-
-    // clear
-    void clear() { field_->Clear(); }
-
-private:
-    ::google::protobuf::RepeatedField<T>* field_;
-};
-
-} // namespace detail
-#endif // REPEATED_FIELD_WRAPPER_HPP
-"""
+                need_repeated_field_wrapper = True
 
                 # numeric な repeated => RepeatedFieldWrapper<T>
                 # 例) repeated uint32_t -> detail::RepeatedFieldWrapper<uint32_t>
@@ -390,118 +342,19 @@ private:
                 )
                 # send() 時の同期は不要 (直接 RepeatedField を操作しているため)
             
+            elif("RepeatedPtrField" in underlying_type and "std::string" in cpp_type):
+                # repeated string 用の簡易ラッパー
+                need_repeated_string_field_wrapper = True
+                wrapper_type = "detail::RepeatedStringFieldWrapper"
+                member_vars.append(f"    {wrapper_type} {field_name}_;")
+                initializer_list.append(f"{field_name}_(grpc_->mutable_{field_name}())")
+                accessor_methods.append(
+                    f"    {wrapper_type}& {field_name}() {{ return {field_name}_; }}\n"
+                    f"    const {wrapper_type}& {field_name}() const {{ return {field_name}_; }}"
+                )
+
             elif("RepeatedPtrField" in underlying_type):
-                # ラッパークラス内で使う detail 名前空間の定義 (RepeatedFieldWrapper)
-                repeated_field_wrapper_code = f"""\
-#ifndef REPEATED_PTR_FIELD_WRAPPER_HPP
-#define REPEATED_PTR_FIELD_WRAPPER_HPP
-namespace detail {{
-template <typename T, typename S>
-class RepeatedPtrFieldWrapper {{
-public:
-    explicit RepeatedPtrFieldWrapper(::google::protobuf::RepeatedPtrField<S>* field) : field_(field) {{
-        for (int i = 0; i < field_->size(); ++i) {{
-            elements_.push_back(new T(field_->Mutable(i)));
-        }}
-    }}
-
-    ~RepeatedPtrFieldWrapper() {{
-        for (auto* elem : elements_) {{
-            delete elem;
-        }}
-        elements_.clear();
-    }}
-
-    // コピーコンストラクタ
-    RepeatedPtrFieldWrapper(const RepeatedPtrFieldWrapper& other)
-        : field_(other.field_) {{
-        for (int i = 0; i < field_->size(); ++i) {{
-            elements_.push_back(new T(field_->Mutable(i)));
-        }}
-    }}
-
-    // コピー代入演算子
-    RepeatedPtrFieldWrapper& operator=(const RepeatedPtrFieldWrapper& other) {{
-        if (this != &other) {{
-            for (auto* elem : elements_) {{
-                delete elem;
-            }}
-            elements_.clear();
-            field_ = other.field_;
-            for (int i = 0; i < field_->size(); ++i) {{
-                elements_.push_back(new T(field_->Mutable(i)));
-            }}
-        }}
-        return *this;
-    }}
-
-    // operator[]
-    T& operator[](size_t index) {{
-        if (!field_) {{
-            throw std::runtime_error("RepeatedPtrField is not initialized");
-        }}
-        return *elements_[index];
-    }}
-    const T& operator[](size_t index) const {{
-        if (!field_) {{
-            throw std::runtime_error("RepeatedPtrField is not initialized");
-        }}
-        return *elements_[index];
-    }}
-
-    // push_back
-    void push_back(const T& value) {{
-        S* added = field_->Add();
-        added->CopyFrom(*value.get_grpc());
-        elements_.push_back(new T(field_->Mutable(field_->size() - 1)));
-    }}
-
-    // erase
-    void erase(size_t index) {{
-        if (index >= size()) throw std::out_of_range("Index out of range");
-        delete elements_[index];
-        elements_.erase(elements_.begin() + index);
-        field_->DeleteSubrange(index, 1);
-    }}
-
-    // size, empty
-    size_t size() const {{ return field_->size(); }}
-    bool empty() const {{ return field_->empty(); }}
-
-    // resize
-    void resize(size_t new_size) {{
-        size_t current_size = static_cast<size_t>(field_->size());
-        if (new_size > current_size) {{
-            for (size_t i = current_size; i < new_size; ++i) {{
-                auto* new_element = field_->Add();
-                elements_.push_back(new T(new_element));
-            }}
-        }} else if (new_size < current_size) {{
-            for (size_t i = current_size; i > new_size; --i) {{
-                delete elements_[i - 1];
-            }}
-            elements_.resize(new_size);
-            field_->DeleteSubrange(new_size, current_size - new_size);
-        }}
-    }}
-
-    // clear
-    void clear() {{
-        for (auto* elem : elements_) {{
-            delete elem;
-        }}
-        elements_.clear();
-        field_->Clear();
-    }}
-
-private:
-    ::google::protobuf::RepeatedPtrField<S>* field_;
-    mutable std::vector<T*> elements_;
-}};
-
-}} // namespace detail
-#endif // REPEATED_PTR_FIELD_WRAPPER_HPP
-"""
+                need_repeated_ptr_field_wrapper = True
                 # numeric な repeated => RepeatedPtrFieldWrapper<T>
                 type = cpp_type.split('<')[-1].split('>')[0].strip()
                 type_without_grpc = type.replace("GRPC", "")
@@ -570,6 +423,194 @@ public:
 private:
     {grpc_full_class}* grpc_;
 }};
+"""
+
+    # フラグに基づいてラッパーコードを構築
+    repeated_field_wrapper_code = ""
+    if need_repeated_field_wrapper:
+        repeated_field_wrapper_code += """
+#ifndef REPEATED_FIELD_WRAPPER_HPP
+#define REPEATED_FIELD_WRAPPER_HPP
+namespace detail {
+
+template <typename T>
+class RepeatedFieldWrapper {
+public:
+    explicit RepeatedFieldWrapper(::google::protobuf::RepeatedField<T>* field) : field_(field) {}
+
+    T& operator[](size_t index) {
+        if (!field_) {
+            throw std::runtime_error("RepeatedField is not initialized");
+        }
+        return *field_->Mutable(index);
+    }
+    const T& operator[](size_t index) const {
+        if (!field_) {
+            throw std::runtime_error("RepeatedField is not initialized");
+        }
+        return field_->Get(index);
+    }
+
+    void push_back(const T& value) { field_->Add(value); }
+
+    void erase(size_t index) {
+        if (index >= size()) throw std::out_of_range("Index out of range");
+        field_->DeleteSubrange(index, 1);
+    }
+
+    size_t size() const { return field_->size(); }
+    bool empty() const { return field_->empty(); }
+
+    void resize(size_t new_size) { field_->Resize(new_size, T()); }
+
+    void clear() { field_->Clear(); }
+
+private:
+    ::google::protobuf::RepeatedField<T>* field_;
+};
+
+} // namespace detail
+#endif // REPEATED_FIELD_WRAPPER_HPP
+"""
+    if need_repeated_string_field_wrapper:
+        repeated_field_wrapper_code += """
+#ifndef REPEATED_STRING_FIELD_WRAPPER_HPP
+#define REPEATED_STRING_FIELD_WRAPPER_HPP
+namespace detail {
+
+class RepeatedStringFieldWrapper {
+public:
+    explicit RepeatedStringFieldWrapper(::google::protobuf::RepeatedPtrField<std::string>* field) : field_(field) {}
+
+    std::string& operator[](size_t index) { return *field_->Mutable(index); }
+    const std::string& operator[](size_t index) const { return field_->Get(index); }
+
+    void push_back(const std::string& value) { *field_->Add() = value; }
+
+    void erase(size_t index) {
+        if (index >= size()) throw std::out_of_range("Index out of range");
+        field_->DeleteSubrange(index, 1);
+    }
+
+    size_t size() const { return field_->size(); }
+    bool empty() const { return field_->empty(); }
+
+    void resize(size_t new_size) {
+        while (static_cast<size_t>(field_->size()) < new_size) field_->Add();
+        while (static_cast<size_t>(field_->size()) > new_size) field_->RemoveLast();
+    }
+
+    void clear() { field_->Clear(); }
+
+private:
+    ::google::protobuf::RepeatedPtrField<std::string>* field_;
+};
+
+} // namespace detail
+#endif // REPEATED_STRING_FIELD_WRAPPER_HPP
+"""
+    if need_repeated_ptr_field_wrapper:
+        repeated_field_wrapper_code += """\
+#ifndef REPEATED_PTR_FIELD_WRAPPER_HPP
+#define REPEATED_PTR_FIELD_WRAPPER_HPP
+namespace detail {
+template <typename T, typename S>
+class RepeatedPtrFieldWrapper {
+public:
+    explicit RepeatedPtrFieldWrapper(::google::protobuf::RepeatedPtrField<S>* field) : field_(field) {
+        for (int i = 0; i < field_->size(); ++i) {
+            elements_.push_back(new T(field_->Mutable(i)));
+        }
+    }
+
+    ~RepeatedPtrFieldWrapper() {
+        for (auto* elem : elements_) {
+            delete elem;
+        }
+        elements_.clear();
+    }
+
+    RepeatedPtrFieldWrapper(const RepeatedPtrFieldWrapper& other)
+        : field_(other.field_) {
+        for (int i = 0; i < field_->size(); ++i) {
+            elements_.push_back(new T(field_->Mutable(i)));
+        }
+    }
+
+    RepeatedPtrFieldWrapper& operator=(const RepeatedPtrFieldWrapper& other) {
+        if (this != &other) {
+            for (auto* elem : elements_) {
+                delete elem;
+            }
+            elements_.clear();
+            field_ = other.field_;
+            for (int i = 0; i < field_->size(); ++i) {
+                elements_.push_back(new T(field_->Mutable(i)));
+            }
+        }
+        return *this;
+    }
+
+    T& operator[](size_t index) {
+        if (!field_) {
+            throw std::runtime_error("RepeatedPtrField is not initialized");
+        }
+        return *elements_[index];
+    }
+    const T& operator[](size_t index) const {
+        if (!field_) {
+            throw std::runtime_error("RepeatedPtrField is not initialized");
+        }
+        return *elements_[index];
+    }
+
+    void push_back(const T& value) {
+        S* added = field_->Add();
+        added->CopyFrom(*value.get_grpc());
+        elements_.push_back(new T(field_->Mutable(field_->size() - 1)));
+    }
+
+    void erase(size_t index) {
+        if (index >= size()) throw std::out_of_range("Index out of range");
+        delete elements_[index];
+        elements_.erase(elements_.begin() + index);
+        field_->DeleteSubrange(index, 1);
+    }
+
+    size_t size() const { return field_->size(); }
+    bool empty() const { return field_->empty(); }
+
+    void resize(size_t new_size) {
+        size_t current_size = static_cast<size_t>(field_->size());
+        if (new_size > current_size) {
+            for (size_t i = current_size; i < new_size; ++i) {
+                auto* new_element = field_->Add();
+                elements_.push_back(new T(new_element));
+            }
+        } else if (new_size < current_size) {
+            for (size_t i = current_size; i > new_size; --i) {
+                delete elements_[i - 1];
+            }
+            elements_.resize(new_size);
+            field_->DeleteSubrange(new_size, current_size - new_size);
+        }
+    }
+
+    void clear() {
+        for (auto* elem : elements_) {
+            delete elem;
+        }
+        elements_.clear();
+        field_->Clear();
+    }
+
+private:
+    ::google::protobuf::RepeatedPtrField<S>* field_;
+    mutable std::vector<T*> elements_;
+};
+
+} // namespace detail
+#endif // REPEATED_PTR_FIELD_WRAPPER_HPP
 """
 
     # namespace

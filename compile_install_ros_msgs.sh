@@ -94,14 +94,6 @@ sudo mkdir -p ${INSTALL_DIR}/lib
 sudo cp -f lib*.so ${INSTALL_DIR}/lib/
 sudo mkdir -p ${INSTALL_DIR}/include
 sudo cp -rf $BASE_DIR/* ${INSTALL_DIR}/include/
-
-# Install rclcpp headers (ROS 2 compatible API layer)
-SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-if [ -d "${SCRIPT_DIR}/include" ]; then
-    sudo cp -rf "${SCRIPT_DIR}/include/"* ${INSTALL_DIR}/include/
-    echo "Installed rclcpp headers to ${INSTALL_DIR}/include/"
-fi
-
 rm -f ./lib*.so
 
 echo "Installation complete: ${INSTALL_DIR}"
